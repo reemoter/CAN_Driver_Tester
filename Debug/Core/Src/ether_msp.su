@@ -1,0 +1,2 @@
+../Core/Src/ether_msp.c:6:6:HAL_ETH_MspInit	64	static
+../Core/Src/ether_msp.c:31:6:HAL_ETH_MspDeInit	16	static

@@ -1,0 +1,8 @@
+../Core/Src/control_udp.c:16:17:get32	16	static
+../Core/Src/control_udp.c:21:13:put32	24	static
+../Core/Src/control_udp.c:23:13:put16	16	static
+../Core/Src/control_udp.c:26:13:reply	32	static
+../Core/Src/control_udp.c:34:16:active	16	static
+../Core/Src/control_udp.c:42:16:execute	16	static
+../Core/Src/control_udp.c:55:13:receive	240	static
+../Core/Src/control_udp.c:147:7:ControlUdp_Init	16	static

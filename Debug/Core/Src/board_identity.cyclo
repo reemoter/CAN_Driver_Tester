@@ -1,0 +1,3 @@
+../Core/Src/board_identity.c:10:19:BoardIdentity_Init	10
+../Core/Src/board_identity.c:60:16:BoardIdentity_Mac	1
+../Core/Src/board_identity.c:62:6:BoardIdentity_CopyIPv4	2

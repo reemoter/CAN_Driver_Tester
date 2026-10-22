@@ -1,0 +1,22 @@
+# Fallback for the existing generated Debug makefiles until CubeIDE refreshes
+# source discovery. After regeneration motor.c is already in C_SRCS/objects.list.
+ifeq ($(filter ../Core/Src/motor.c,$(C_SRCS)),)
+USER_OBJS += ./Core/Src/motor.o
+endif
+
+# Fallback until CubeIDE discovers control_udp.c.
+ifeq ($(filter ../Core/Src/control_udp.c,$(C_SRCS)),)
+USER_OBJS += ./Core/Src/control_udp.o
+endif
+
+ifeq ($(filter ../Core/Src/ether_phy.c,$(C_SRCS)),)
+USER_OBJS += ./Core/Src/ether_phy.o
+endif
+
+ifeq ($(filter ../Core/Src/ether_msp.c,$(C_SRCS)),)
+USER_OBJS += ./Core/Src/ether_msp.o
+endif
+
+ifeq ($(filter ../Core/Src/board_identity.c,$(C_SRCS)),)
+USER_OBJS += ./Core/Src/board_identity.o
+endif
