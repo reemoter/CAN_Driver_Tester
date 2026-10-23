@@ -50,9 +50,9 @@
 
 /* USER CODE BEGIN PV */
 
-volatile uint8_t trigger_tim5 = 0;
+/*volatile uint8_t trigger_tim5 = 0;
 volatile uint8_t trigger_tim6 = 0;
-volatile uint8_t trigger_tim7 = 0;
+volatile uint8_t trigger_tim7 = 0;*/
 
 
 /* USER CODE END PV */
@@ -118,12 +118,12 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-
+	  scheduler();
+	  MX_LWIP_Process();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    scheduler();
-    MX_LWIP_Process();
+
   }
   /* USER CODE END 3 */
 }
@@ -181,16 +181,13 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
 	if(htim->Instance == htim5.Instance)
 	{
-		trigger_tim5 = 1;
 	}
 	if(htim->Instance == htim6.Instance)
 	{
-		trigger_tim6 = 1;
         Motor_Tick1ms();
 	}
 	if(htim->Instance == htim7.Instance)
 	{
-		trigger_tim7 = 1;
 	}
 }
 
