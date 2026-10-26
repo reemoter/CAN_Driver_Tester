@@ -1,4 +1,5 @@
 #include "ether_phy.h"
+#include "app_time.h"
 
 volatile EthernetDiagnostics ethernet_diagnostics = {.phy_address = 0xFFFFFFFFU};
 static uint32_t scan_address = 1U;
@@ -16,7 +17,7 @@ void EthernetPhy_Check(struct netif *netif, ETH_HandleTypeDef *eth)
 {
     uint32_t status, control, advertised, partner;
     ethernet_diagnostics.poll_count++;
-    ethernet_diagnostics.last_poll_ms=HAL_GetTick();
+    ethernet_diagnostics.last_poll_ms=AppTime_NowMs();
     if (!mdio_initialized) {
         /* This HAL version does not configure MDC during HAL_ETH_Init.
          * Set its divider from HCLK before the first management transaction. */

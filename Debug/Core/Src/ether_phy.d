@@ -48,7 +48,7 @@ Core/Src/ether_phy.o: ../Core/Src/ether_phy.c ../Core/Inc/ether_phy.h \
  ../Middlewares/Third_Party/LwIP/src/include/lwip/priv/memp_std.h \
  ../Middlewares/Third_Party/LwIP/src/include/lwip/priv/memp_priv.h \
  ../Middlewares/Third_Party/LwIP/src/include/lwip/priv/mem_priv.h \
- ../Core/Inc/main.h
+ ../Core/Inc/main.h ../Core/Inc/app_time.h
 ../Core/Inc/ether_phy.h:
 ../Middlewares/Third_Party/LwIP/src/include/lwip/netif.h:
 ../Middlewares/Third_Party/LwIP/src/include/lwip/opt.h:
@@ -101,3 +101,4 @@ Core/Src/ether_phy.o: ../Core/Src/ether_phy.c ../Core/Inc/ether_phy.h \
 ../Middlewares/Third_Party/LwIP/src/include/lwip/priv/memp_priv.h:
 ../Middlewares/Third_Party/LwIP/src/include/lwip/priv/mem_priv.h:
 ../Core/Inc/main.h:
+../Core/Inc/app_time.h:

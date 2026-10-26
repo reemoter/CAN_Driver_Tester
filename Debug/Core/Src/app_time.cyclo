@@ -1,0 +1,2 @@
+../Core/Src/app_time.c:5:6:AppTime_Tick1ms	1
+../Core/Src/app_time.c:6:10:AppTime_NowMs	1

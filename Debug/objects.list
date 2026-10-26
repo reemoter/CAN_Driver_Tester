@@ -1,3 +1,5 @@
+"./Core/Src/app_scheduler.o"
+"./Core/Src/app_time.o"
 "./Core/Src/board_identity.o"
 "./Core/Src/can.o"
 "./Core/Src/control_udp.o"

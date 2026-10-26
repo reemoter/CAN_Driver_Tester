@@ -15,6 +15,27 @@ def response(sequence=1, command=0, index=0):
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_direction_selection_and_signed_limits(self):
+        for direction, sign in [('Forward (+)', 1), ('Reverse (-)', -1)]:
+            self.assertEqual(protocol.direction_velocity('250', direction), sign * 250)
+            self.assertEqual(protocol.direction_velocity('0', direction), 0)
+        self.assertEqual(protocol.direction_velocity(str(2**31), 'Reverse (-)'), -(2**31))
+        for speed, direction in [('-250', 'Forward (+)'), ('x', 'Reverse (-)'),
+                                  (str(2**31), 'Forward (+)'), (str(2**31+1), 'Reverse (-)'), ('1', 'CW')]:
+            with self.assertRaises(ValueError):
+                protocol.direction_velocity(speed, direction)
+
+    def test_reversal_diagnostic_flags(self):
+        frame = bytearray(response(1, 9)) + bytearray(112)
+        frame[103] = 0x81
+        parsed = protocol.decode(bytes(frame), 1, 9, 0)
+        self.assertTrue(parsed['reversal_supported'])
+        self.assertTrue(parsed['reversal_pending'])
+        frame[103] = 0
+        parsed = protocol.decode(bytes(frame), 1, 9, 0)
+        self.assertFalse(parsed['reversal_supported'])
+        self.assertEqual(protocol.ERRORS[12], 'REVERSAL_TIMEOUT')
+
     def test_pdo_diagnostics_and_error_label(self):
         frame = bytearray(response(1, 9)) + bytearray(112)
         struct.pack_into('<H', frame, 130, 1)

@@ -90,7 +90,7 @@ void MX_GPIO_Init(void)
   /*Configure GPIO pins : INPUT_DEVICE0_Pin INPUT_DEVICE1_Pin */
   GPIO_InitStruct.Pin = INPUT_DEVICE0_Pin|INPUT_DEVICE1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
 }

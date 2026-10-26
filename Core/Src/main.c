@@ -28,6 +28,8 @@
 #include "motor.h"
 #include "control_udp.h"
 #include "board_identity.h"
+#include "app_time.h"
+#include "app_scheduler.h"
 
 /* USER CODE END Includes */
 
@@ -50,9 +52,7 @@
 
 /* USER CODE BEGIN PV */
 
-/*volatile uint8_t trigger_tim5 = 0;
-volatile uint8_t trigger_tim6 = 0;
-volatile uint8_t trigger_tim7 = 0;*/
+
 
 
 /* USER CODE END PV */
@@ -61,7 +61,7 @@ volatile uint8_t trigger_tim7 = 0;*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 
-void scheduler(void);
+
 
 
 /* USER CODE END PFP */
@@ -108,9 +108,11 @@ int main(void)
   /* USER CODE BEGIN 2 */
   if (Motor_Init() != HAL_OK) Error_Handler();
   if (ControlUdp_Init() != ERR_OK) Error_Handler();
-  HAL_TIM_Base_Start_IT(&htim5);
-  HAL_TIM_Base_Start_IT(&htim6);
-  HAL_TIM_Base_Start_IT(&htim7);
+  AppScheduler_Init();
+  /* TIM5/TIM7 are initialized by CubeMX but have no assigned application job. */
+  HAL_NVIC_DisableIRQ(TIM5_IRQn);
+  HAL_NVIC_DisableIRQ(TIM7_IRQn);
+  if (HAL_TIM_Base_Start_IT(&htim6) != HAL_OK) Error_Handler();
 
   /* USER CODE END 2 */
 
@@ -118,7 +120,7 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  scheduler();
+	  AppScheduler_Process();
 	  MX_LWIP_Process();
     /* USER CODE END WHILE */
 
@@ -178,22 +180,7 @@ void SystemClock_Config(void)
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-
-	if(htim->Instance == htim5.Instance)
-	{
-	}
-	if(htim->Instance == htim6.Instance)
-	{
-        Motor_Tick1ms();
-	}
-	if(htim->Instance == htim7.Instance)
-	{
-	}
-}
-
-void scheduler(void)
-{
-    Motor_Process();
+    if (htim->Instance == TIM6) AppTime_Tick1ms();
 }
 
 /* USER CODE END 4 */

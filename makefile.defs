@@ -20,3 +20,11 @@ endif
 ifeq ($(filter ../Core/Src/board_identity.c,$(C_SRCS)),)
 USER_OBJS += ./Core/Src/board_identity.o
 endif
+
+ifeq ($(filter ../Core/Src/app_time.c,$(C_SRCS)),)
+USER_OBJS += ./Core/Src/app_time.o
+endif
+
+ifeq ($(filter ../Core/Src/app_scheduler.c,$(C_SRCS)),)
+USER_OBJS += ./Core/Src/app_scheduler.o
+endif

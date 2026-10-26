@@ -2,11 +2,19 @@
 #define BOARD_IDENTITY_H
 #include "main.h"
 
-/* Original board selector order: DEVICE0=MSB, DEVICE1=LSB. */
-#define BOARD_ID_FROM_LEVELS(device0, device1) \
-    ((((device0) ? 2U : 0U) | ((device1) ? 1U : 0U)) + 1U)
+/* Compile-time identity. No GPIO selector: PD0/PD1 belong to sensor wiring.
+ * Change BOARD_CONFIG_ID (1..4), rebuild and download to select a board.
+ * ID 1/2/3/4 -> 192.168.0.23/24/25/26, MAC last byte = ID.
+ * Can also be overridden by compiler -DBOARD_CONFIG_ID=... . */
+#ifndef BOARD_CONFIG_ID
+#define BOARD_CONFIG_ID 2U
+#endif
 #define BOARD_IP_BASE_LAST 22U
 #define BOARD_HOST_FOR_ID(id) (BOARD_IP_BASE_LAST + (id))
+#define BOARD_SELECTOR_UNUSED 0xFFU
+
+_Static_assert(BOARD_CONFIG_ID >= 1U && BOARD_CONFIG_ID <= 4U,
+               "BOARD_CONFIG_ID must be 1..4");
 
 typedef struct {
     uint8_t id, raw_selector, stable, initialized;
@@ -14,7 +22,8 @@ typedef struct {
     uint8_t ip[4], netmask[4], gateway[4], mac[6];
 } BoardIdentity;
 
-/* Read-only diagnostics. ID is latched at boot; changing switches needs reset. */
+/* Read-only diagnostics. raw_selector=0xFF, samples=0: no physical selector.
+ * stable means a valid fixed configuration; retained for UDP compatibility. */
 extern volatile BoardIdentity board_identity;
 HAL_StatusTypeDef BoardIdentity_Init(void);
 const uint8_t *BoardIdentity_Mac(void); /* Persistent storage, not stack memory. */

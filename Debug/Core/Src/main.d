@@ -60,8 +60,9 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  ../Middlewares/Third_Party/LwIP/src/include/lwip/dhcp.h \
  ../Middlewares/Third_Party/LwIP/src/include/lwip/timeouts.h \
  ../LWIP/Target/ethernetif.h ../Core/Inc/tim.h ../Core/Inc/gpio.h \
- ../Core/Inc/motor.h ../Core/Inc/control_udp.h \
- ../Core/Inc/board_identity.h
+ ../Core/Inc/motor.h ../Core/Inc/app_timing.h ../Core/Inc/control_udp.h \
+ ../Core/Inc/board_identity.h ../Core/Inc/app_time.h \
+ ../Core/Inc/app_scheduler.h
 ../Core/Inc/main.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal.h:
 ../Core/Inc/stm32f4xx_hal_conf.h:
@@ -129,5 +130,8 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
 ../Core/Inc/tim.h:
 ../Core/Inc/gpio.h:
 ../Core/Inc/motor.h:
+../Core/Inc/app_timing.h:
 ../Core/Inc/control_udp.h:
 ../Core/Inc/board_identity.h:
+../Core/Inc/app_time.h:
+../Core/Inc/app_scheduler.h:

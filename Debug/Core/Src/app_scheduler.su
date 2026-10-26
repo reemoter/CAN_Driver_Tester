@@ -1,0 +1,3 @@
+../Core/Src/app_scheduler.c:12:13:check_ethernet_link	8	static
+../Core/Src/app_scheduler.c:24:6:AppScheduler_Init	40	static
+../Core/Src/app_scheduler.c:33:6:AppScheduler_Process	32	static

@@ -1,5 +1,37 @@
 # UDP motor bench control v1
 
+## Rotation direction
+
+The GUI accepts a nonnegative speed magnitude and Forward (+) / Reverse (-).
+Selecting a direction alone does not send motion: press Set velocity to apply.
+Set zero speed commands zero while remaining enabled; Quick Stop retains its
+existing stop workflow. Positive/negative follow the configured drive convention;
+they do not establish a universal CW/CCW view of the mechanism.
+
+Command 2 still uses a signed 32-bit velocity. No packet lengths or command IDs
+change. Firmware detects reversal against the previous commanded direction or
+opposite measured motion, first commands zero, then requires fresh TPDO velocity
+within +/-5 configured velocity units for at least 100 ms before applying the
+requested opposite sign. Current drive units are rpm. Zero tolerance is
+MOTOR_REVERSAL_ZERO_BAND; hold/timeout settings are APP_REVERSAL_ZERO_HOLD_MS
+and APP_REVERSAL_TIMEOUT_MS in app_timing.h (defaults 100 / 5000 ms).
+The EPOS profile deceleration controls slowing down; MCU adds no outer PID.
+Failure to confirm standstill latches REVERSAL_TIMEOUT (12).
+Keepalive/lease and all existing communication supervision remain active.
+Zero speed, Quick Stop, fault, power cycle and Reset drivers cancel queued reversal.
+No deferred motion is restored after reconnect/error/reset.
+
+motor_status.requested_velocity records the user request; target_velocity remains
+zero during the interlock. Direction changes do not silently renew the lease.
+Extended reply byte 103, formerly reserved: bit 7 indicates reversal support,
+bit 0 indicates a pending reversal. GUI/CSV expose both flags; older firmware
+reports no support and the updated GUI displays an update message.
+Update both firmware and PC tool before testing reversal at a commissioned speed.
+
+Firmware timing is centralized in Core/Inc/app_timing.h, using the TIM6 AppTime
+clock for motor, control ownership, UDP timestamps and PHY diagnostics.
+See [SCHEDULING.md](SCHEDULING.md). HAL/lwIP internal clocks are unchanged.
+
 Motor motion now uses synchronous PDO/SYNC (10 ms); commissioning and detailed
 diagnostics remain SDO. See [PDO_CANOPEN.md](PDO_CANOPEN.md) for mappings,
 supervision and first hardware test. Command 9 reports PDO configured at offset
@@ -7,24 +39,24 @@ supervision and first hardware test. Command 9 reports PDO configured at offset
 
 ## First test (read-only)
 
-MCU: board 1 defaults to 192.168.0.23/24, UDP port 2000.
-Board selection is latched at MCU boot: PD0 (DEVICE0) is the high bit and
-PD1 (DEVICE1) is the low bit, matching the original firmware.
+MCU defaults to 192.168.0.24/24, UDP port 2000.
+Set BOARD_CONFIG_ID in Core/Inc/board_identity.h and rebuild/download.
+Default is 2; compiler -DBOARD_CONFIG_ID overrides the header default.
+PD0/PD1 are sensor inputs, never sampled for network identity. The old internal
+pulldowns are removed (GPIO input, no pull, also persisted in the .ioc).
 
-| PD0 | PD1 | Board ID | IPv4 | MAC |
-|---|---|---|---|---|
-| Low | Low | 1 | 192.168.0.23 | 00:80:E1:00:00:01 |
-| Low | High | 2 | 192.168.0.24 | 00:80:E1:00:00:02 |
-| High | Low | 3 | 192.168.0.25 | 00:80:E1:00:00:03 |
-| High | High | 4 | 192.168.0.26 | 00:80:E1:00:00:04 |
+| BOARD_CONFIG_ID | IPv4 | MAC |
+|---|---|---|
+| 1 | 192.168.0.23 | 00:80:E1:00:00:01 |
+| 2 (default) | 192.168.0.24 | 00:80:E1:00:00:02 |
+| 3 | 192.168.0.25 | 00:80:E1:00:00:03 |
+| 4 | 192.168.0.26 | 00:80:E1:00:00:04 |
 
-The original default base host (.22) plus board ID determines the address.
-No legacy Flash contents are loaded. Inputs must agree for eight consecutive
-samples, 1 ms apart, within 50 attempts; unstable inputs stop initialization
-with board_identity.error=1. The selected identity stays fixed until MCU reset;
-Reset drivers does not change it. Read-only board_identity exposes the inputs,
-ID, initialization status, sample count and final addresses. MAC storage has
-static lifetime. Network integration uses CubeMX USER CODE sections.
+The identity is compile-time configured: no switch sampling, boot delay or
+legacy Flash configuration. Invalid IDs fail compilation. Diagnostics keep
+raw_selector=255 (unused), samples=0, stable=1 (valid fixed configuration).
+Each board on the network must use a different compiled ID. MAC storage has
+static lifetime. Reset drivers does not change network identity.
 
 Set the PC Ethernet adapter to an unused address on the same subnet, for example
 192.168.0.10/24. Do not assign .23 through .26 to the PC. A direct Ethernet link does not need
@@ -39,7 +71,7 @@ do not write values while running with J-Link.
     python tools/udp_motor.py
 
 Optional: --host 192.168.0.23 --bind 192.168.0.10 --port 2000.
-Reply bytes 53/54/55 expose board ID, raw selector (0..3), and flags
+Reply bytes 53/54/55 expose board ID, raw selector (255=unused), and flags
 (bit 0 initialized, bit 1 stable); packet lengths remain unchanged.
 Python 3 standard library only; GUI requires tkinter. On Connect, only status
 queries are sent. OFFLINE and zero CAN counters are expected before Power ON.
@@ -114,10 +146,10 @@ Response is exactly 56 bytes, sent to the source address/port:
 | 28 | 4 | SDO abort code |
 | 32,36 | 4 each | CAN RX frames, TX registrations (not bus success) |
 | 40 | 4 | CAN ESR |
-| 44 | 4 | HAL uptime ms |
+| 44 | 4 | application uptime ms (TIM6, starts after initialization) |
 | 48 | 4 | command lease ms |
 | 52 | 1 | configured motor count |
-| 53..55 | 1 each | board ID, raw selector, identity flags (initialized=1, stable=2) |
+| 53..55 | 1 each | board ID, unused selector (255), identity flags (initialized=1, stable=2) |
 
 lwIP raw API is called only from main context. CAN motor timing still uses TIM6.
 Firmware contains no UDP processing in timer/CAN interrupts. Long Ethernet HAL
@@ -194,7 +226,7 @@ Extension offsets:
 - 68 i32 current demand mA; 72 i32 actual current mA
 - 76 i32 position; 80 i32 position delta
 - 84 u32 valid mask; 88 u32 unsupported mask; 92 u32 position sample ms
-- 96 u32 diagnostic abort; 100 u16 diagnostic object; 102 u8 subindex; 103 reserved
+- 96 u32 diagnostic abort; 100 u16 diagnostic object; 102 u8 subindex; 103 u8 motion flags (bit7 reversal supported, bit0 pending)
 - 104 u32 current sample ms; 108 u32 torque sample ms; 112 u32 motor clock ms
 - 116 u32 demand sample ms; 120 u32 controlword sample ms; 124 u32 target sample ms
 

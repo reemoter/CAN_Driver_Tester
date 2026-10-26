@@ -44,13 +44,15 @@ reuses the mapping. Reset drivers rebuilds it on the next explicit Enable.
 
 TIM6 supplies the existing 1 ms timestamp. Main-context Motor_Process performs
 the nonblocking transaction; ISR code does not perform CANopen configuration.
+Application timing settings now live in Core/Inc/app_timing.h; AppScheduler
+dispatches motor service and PHY checks using AppTime. See SCHEDULING.md.
 RPDOs are transmitted one at a time and checked for actual bxCAN TXOK before
 SYNC is queued. This prevents SYNC's higher arbitration priority from overtaking
 RPDOs. Both configured, enabled motors share the same SYNC. A single enabled
 motor works without enabling the other one. No missed cycle is replayed.
 This is cooperative scheduling, not a hard real-time guarantee; inspect
 motor_diagnostics.scheduler_late and cycle_missed under Ethernet load before
-reducing MOTOR_SYNC_PERIOD_MS. The initial 10 ms leaves room for two RPDOs,
+reducing APP_CAN_CYCLE_MS. The initial 10 ms leaves room for two RPDOs,
 SYNC, TPDOs and diagnostics with the existing 1 ms service resolution.
 
 Primary feedback and velocity commands use PDO while enabled. Read-only SDO

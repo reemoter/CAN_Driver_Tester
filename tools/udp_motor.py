@@ -12,13 +12,23 @@ import time
 
 STATES = ['OFFLINE', 'MONITOR', 'ENABLING', 'ENABLED', 'STOPPING', 'STOPPED', 'ERROR', 'RESETTING']
 ERRORS = ['NONE', 'SDO_TIMEOUT', 'SDO_ABORT', 'PROTOCOL', 'STATE_TIMEOUT', 'DRIVE',
-          'HEARTBEAT', 'CAN', 'RX_OVERFLOW', 'LEASE', 'TX', 'PDO_TIMEOUT']
+          'HEARTBEAT', 'CAN', 'RX_OVERFLOW', 'LEASE', 'TX', 'PDO_TIMEOUT', 'REVERSAL_TIMEOUT']
 RESULTS = ['OK', 'BAD_PACKET', 'BAD_COMMAND', 'BAD_INDEX', 'STATE_OR_BUSY',
            'VELOCITY_RANGE', 'RESERVED', 'STALE_SEQUENCE', 'OTHER_CONTROLLER']
 
 
 def encode(sequence, command, index=0, value=0):
     return struct.pack('<4sIBBHi', b'ABS1', sequence, command, index, 0, value)
+
+
+def direction_velocity(magnitude, direction):
+    speed = int(magnitude)
+    if speed < 0 or direction not in ('Forward (+)', 'Reverse (-)'):
+        raise ValueError('Enter a nonnegative speed and select Forward (+) or Reverse (-).')
+    value = -speed if direction == 'Reverse (-)' else speed
+    if not -(2**31) <= value <= 2**31 - 1:
+        raise ValueError('The selected signed velocity must fit 32 bits.')
+    return value
 
 
 def decode(data, sequence, command, index):
@@ -39,6 +49,8 @@ def decode(data, sequence, command, index):
                  'position_ms', 'diag_abort', 'diag_object', 'diag_sub', 'reserved',
                  'current_ms', 'torque_ms', 'motor_ms', 'demand_ms', 'controlword_ms', 'drive_target_ms')
         result.update(zip(names, fields))
+        result['reversal_supported'] = bool(data[103] & 0x80)
+        result['reversal_pending'] = bool(data[103] & 1)
     if len(data) == 168:
         result.update(zip(('hall', 'pdo_ready', 'hall_ms', 'hall_edges', 'hall_skipped',
                            'hall_invalid', 'encoder_ppr', 'pole_pairs', 'position_unit', 'statusword_ms', 'pdo_rx'),
@@ -120,6 +132,7 @@ def gui(args):
     host = tk.StringVar(value=args.host)
     index = tk.StringVar(value='0')
     velocity = tk.StringVar(value='0')
+    direction = tk.StringVar(value='Forward (+)')
     status = tk.StringVar(value='Disconnected. Connect performs status reads only.')
     settings = ttk.Frame(root, padding=10)
     settings.pack(fill='x')
@@ -127,18 +140,26 @@ def gui(args):
     ttk.Entry(settings, textvariable=host, width=18).pack(side='left', padx=5)
     ttk.Label(settings, text='Motor index (0/1)').pack(side='left')
     ttk.Entry(settings, textvariable=index, width=4).pack(side='left', padx=5)
-    ttk.Label(settings, text='Velocity (EPOS units / rpm)').pack(side='left')
+    ttk.Label(settings, text='Speed magnitude (EPOS units / rpm)').pack(side='left')
     ttk.Entry(settings, textvariable=velocity, width=7).pack(side='left', padx=5)
 
-    def submit(command):
+    def submit(command, zero=False):
         try:
             i = int(index.get())
-            v = int(velocity.get()) if command == 2 else 0
+            v = direction_velocity(velocity.get(), direction.get()) if command == 2 and not zero else 0
             if i not in (0, 1) or not -(2**31) <= v <= 2**31 - 1:
-                raise ValueError('Use index 0/1 and signed 32-bit velocity (-2147483648..2147483647)')
+                raise ValueError('Use motor index 0/1 and a valid 32-bit velocity.')
             commands.put((command, i, v))
         except ValueError as exc:
             status.set(str(exc))
+
+    directions = ttk.Frame(root, padding=(10, 0))
+    directions.pack(fill='x')
+    ttk.Label(directions, text='Direction').pack(side='left')
+    ttk.Combobox(directions, textvariable=direction, state='readonly', width=16,
+                 values=('Forward (+)', 'Reverse (-)')).pack(side='left', padx=5)
+    ttk.Button(directions, text='Set zero speed', command=lambda: submit(2, zero=True)).pack(side='left', padx=5)
+    ttk.Label(directions, text='Select direction, then Set velocity. Reversal waits for standstill in MCU.').pack(side='left')
 
     buttons = ttk.Frame(root, padding=10)
     buttons.pack(fill='x')
@@ -226,7 +247,8 @@ def gui(args):
                     if cmd == 3:
                         armed = None
                     reply = client.request(cmd, i, v if cmd == 2 else 0)
-                    events.put(('log', f'Command {cmd}: {label(RESULTS, reply["result"])}'))
+                    detail = f' | requested velocity={v}' if cmd == 2 else ''
+                    events.put(('log', f'Command {cmd}: {label(RESULTS, reply["result"])}{detail}'))
                     events.put(('status', reply))
                     if cmd == 1 and reply['result'] == 0:
                         armed = i
@@ -273,7 +295,7 @@ def gui(args):
                         r['node'] != measurement_start['node']):
                     measurement_start, turn_phase = None, 0
                     events.put(('log', 'Hand-turn measurement invalidated: disabled-state/node changed. Start again after Reset drivers.'))
-                status.set(f'Board {r["board_id"]} (selector {r["board_raw"]:02b}) | Node {r["node"]}: {label(STATES,r["state"])} | error {label(ERRORS,r["error"])} | '
+                status.set(f'Board {r["board_id"]} (configured) | Node {r["node"]}: {label(STATES,r["state"])} | error {label(ERRORS,r["error"])} | '
                            f'result {label(RESULTS,r["result"])}\n'
                            f'SW=0x{r["statusword"]:04X} mode={r["mode"]} target={r["target"]} actual={r["actual"]} '
                            f'CAN RX/TX={r["rx"]}/{r["tx"]} ESR=0x{r["esr"]:08X} abort=0x{r["abort"]:08X}')
@@ -300,6 +322,10 @@ def gui(args):
                         f'{bool(r["controlword"] & 0x100) if r["valid"] & 64 else "not sampled"} | '
                         f'Optional diagnostic abort: 0x{r["diag_abort"]:08X} '
                         f'at 0x{r["diag_object"]:04X}:{r["diag_sub"]:02X}')
+                    feedback.set(feedback.get() + '\n' +
+                                 ('Direction change: waiting for zero-speed feedback' if r['reversal_pending'] else
+                                  'Direction change: none pending' if r['reversal_supported'] else
+                                  'Reversal interlock unavailable: update MCU firmware'))
                     if 'hall' in r:
                         feedback.set(feedback.get() + '\n' +
                                      f'Hall={r["hall"]:03b} edges={r["hall_edges"]} skipped={r["hall_skipped"]} invalid={r["hall_invalid"]} | '
@@ -326,7 +352,7 @@ def gui(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--host', default='192.168.0.23', help='Board 1=.23, 2=.24, 3=.25, 4=.26')
+    parser.add_argument('--host', default='192.168.0.24', help='Firmware BOARD_CONFIG_ID: 1=.23, 2=.24 (default), 3=.25, 4=.26')
     parser.add_argument('--port', type=int, default=2000)
     parser.add_argument('--bind', default='0.0.0.0', help='Optional PC Ethernet IPv4 address')
     parser.add_argument('--status', action='store_true', help='Read-only single status request; no GUI')

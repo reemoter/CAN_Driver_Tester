@@ -31,6 +31,7 @@
 /* USER CODE BEGIN Include for User BSP */
 #include "ether_phy.h"
 #include "board_identity.h"
+#include "app_timing.h"
 
 /* USER CODE END Include for User BSP */
 #include <string.h>
@@ -51,6 +52,8 @@
 #define ETH_TX_BUFFER_MAX             ((ETH_TX_DESC_CNT) * 2U)
 
 /* USER CODE BEGIN 1 */
+#undef ETH_DMA_TRANSMIT_TIMEOUT
+#define ETH_DMA_TRANSMIT_TIMEOUT APP_ETH_TX_TIMEOUT_MS
 
 /* USER CODE END 1 */
 

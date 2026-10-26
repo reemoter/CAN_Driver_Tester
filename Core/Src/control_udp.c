@@ -1,5 +1,6 @@
 #include "control_udp.h"
 #include "motor.h"
+#include "app_time.h"
 #include "board_identity.h"
 #include "lwip/udp.h"
 #include "lwip/pbuf.h"
@@ -61,14 +62,14 @@ static void receive(void *arg, struct udp_pcb *pcb, struct pbuf *p,
     if (p->tot_len!=16 || pbuf_copy_partial(p,request,16,0)!=16) { pbuf_free(p); return; }
     pbuf_free(p);
     if (memcmp(request,"ABS1",4)!=0) return;
-    uint32_t now=HAL_GetTick(), sequence=get32(request+4);
+    uint32_t now=AppTime_NowMs(), sequence=get32(request+4);
     uint8_t command=request[8], index=request[9], result=0;
     uint8_t same=have_owner && owner_port==port && ip_addr_cmp(&owner,addr);
     if (request[10] || request[11]) result=1;
     else if (command>9) result=2;
     else if (index>=MOTOR_COUNT) result=3;
     else if (command>=1 && command<=7) {
-        if (!same && have_owner && (active() || now-owner_ms<3000U)) result=8;
+        if (!same && have_owner && (active() || now-owner_ms<APP_CONTROL_OWNER_GRACE_MS)) result=8;
         else {
             if (!same) {
                 ip_addr_copy(owner,*addr); owner_port=port;
@@ -107,6 +108,7 @@ static void receive(void *arg, struct udp_pcb *pcb, struct pbuf *p,
             put32(response+96,s->diagnostic_abort);
             put16(response+100,s->diagnostic_object);
             response[102]=s->diagnostic_subindex;
+            response[103]=(uint8_t)(0x80U | (s->reversal_pending ? 1U : 0U));
             put32(response+104,s->current_ms);
             put32(response+108,s->torque_ms);
             put32(response+116,s->demand_ms);
@@ -129,7 +131,7 @@ static void receive(void *arg, struct udp_pcb *pcb, struct pbuf *p,
     }
     put32(response+32,motor_diagnostics.rx_count); put32(response+36,motor_diagnostics.tx_count);
     put32(response+40,motor_diagnostics.can_esr); put32(response+44,now);
-    put32(response+48,MOTOR_COMMAND_LEASE_MS); response[52]=MOTOR_COUNT;
+    put32(response+48,APP_COMMAND_LEASE_MS); response[52]=MOTOR_COUNT;
     response[53]=board_identity.id;
     response[54]=board_identity.raw_selector;
     response[55]=(uint8_t)((board_identity.initialized ? 1U : 0U) |

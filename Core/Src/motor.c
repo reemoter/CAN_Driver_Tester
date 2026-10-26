@@ -1,5 +1,7 @@
 #include "motor.h"
 #include "can.h"
+#include "app_time.h"
+#include "motor_profile.h"
 #include <string.h>
 
 _Static_assert(MOTOR_COUNT > 0U && MOTOR_COUNT <= MOTOR_CAPACITY,
@@ -12,7 +14,7 @@ volatile MotorDebugCommand motor_debug;
 typedef struct { uint16_t id; uint8_t len; uint8_t data[8]; } Frame;
 #define RX_SIZE 32U
 static Frame rx_queue[RX_SIZE];
-static volatile uint32_t rx_write, rx_read, clock_ms;
+static volatile uint32_t rx_write, rx_read;
 static uint32_t process_ms, overflow_seen;
 static uint8_t power_on;
 static uint32_t power_on_ms;
@@ -27,6 +29,10 @@ typedef struct {
     uint32_t sent_ms, phase_ms, next_ms, command_ms;
     uint8_t configuring, config_step, pdo_running;
     uint32_t pdo_started_ms;
+    int8_t last_direction;
+    uint8_t reversal_zero_seen;
+    uint32_t reversal_started_ms, reversal_zero_ms;
+    MotorProfile profile;
 } Node;
 static Node nodes[MOTOR_CAPACITY];
 
@@ -70,18 +76,22 @@ static void cancel_cycle(void)
 {
     if (cycle_wait) (void)HAL_CAN_AbortTxRequest(&hcan1, cycle_mailbox);
     cycle_active = cycle_wait = cycle_sync = 0;
-    cycle_due_ms = clock_ms;
+    cycle_due_ms = AppTime_NowMs();
 }
 
 static void fail(uint32_t i, MotorError error)
 {
+    profile_reset(&nodes[i].profile, 0);
     cancel_cycle();
     motor_status[i].failed_object = nodes[i].pending ? nodes[i].object : 0;
-    motor_status[i].failure_ms = clock_ms;
+    motor_status[i].failure_ms = AppTime_NowMs();
     motor_status[i].failure_can_esr = hcan1.Instance->ESR;
     motor_status[i].error = error;
     motor_status[i].state = MOTOR_ERROR;
     motor_status[i].target_velocity = 0;
+    motor_status[i].requested_velocity = 0;
+    motor_status[i].reversal_pending = 0;
+    nodes[i].reversal_zero_seen = 0;
     nodes[i].pending = 0;
     /* Best effort only: a broken bus cannot guarantee a remote stop.
      * Never resume automatically after a communications error. */
@@ -106,7 +116,7 @@ static void request_sub(uint32_t i, uint16_t object, uint8_t subindex, uint8_t s
         n->subindex = subindex;
         n->read = read;
         n->size = size;
-        n->sent_ms = clock_ms;
+        n->sent_ms = AppTime_NowMs();
     } else if (result == HAL_ERROR) fail(i, MOTOR_ERR_TX);
 }
 
@@ -127,10 +137,14 @@ static const PdoSetting pdo_settings[] = {
     {0x1A00,0,1,0,0}, {0x1A00,1,4,0x60410010U,0},
     {0x1A00,2,4,0x60610008U,0}, {0x1A00,3,4,0x606C0020U,0},
     {0x1A00,0,1,3,0}, {0x1800,2,1,1,0}, {0x1800,3,2,0,0},
-    {0x1005,0,4,0x80U,0}, {0x1017,0,2,100U,0},
+    {0x1005,0,4,0x80U,0}, {0x1017,0,2,APP_DRIVE_HEARTBEAT_MS,0},
     {0x6007,0,2,3U,0}, {0x1029,1,1,0U,0},
     {0x1016,2,4,0U,0},
-    {0x1016,1,4,(MOTOR_MASTER_NODE_ID << 16) | MOTOR_CONSUMER_TIMEOUT_MS,0},
+    {0x1016,1,4,(MOTOR_MASTER_NODE_ID << 16) | APP_CONSUMER_TIMEOUT_MS,0},
+    /* PVM driver-side ramp, confirmed before NMT start/enable. */
+    {0x6083,0,4,MOTOR_PROFILE_ACCELERATION,0},
+    {0x6084,0,4,MOTOR_PROFILE_DECELERATION,0},
+    {0x6086,0,2,0U,0}, /* linear ramp; do not alter quick stop (0x6085) */
     {0x1400,1,4,0x00000200U,1}, {0x1800,1,4,0x40000180U,1}
 };
 #define PDO_SETTINGS_COUNT (sizeof(pdo_settings) / sizeof(pdo_settings[0]))
@@ -157,8 +171,8 @@ static void configure_pdo(uint32_t i)
         n->configuring = 0;
         motor_status[i].pdo_ready = 1;
         n->phase = 0;
-        n->phase_ms = clock_ms;
-        n->next_ms = clock_ms + 10U;
+        n->phase_ms = AppTime_NowMs();
+        n->next_ms = AppTime_NowMs() + APP_NMT_START_SETTLE_MS;
     }
 }
 
@@ -174,7 +188,7 @@ static void process_pdo_cycle(uint32_t now)
                          cycle_mailbox == CAN_TX_MAILBOX1 ? 1U : 2U;
         uint32_t tsr = hcan1.Instance->TSR >> (index * 8U);
         if (!(tsr & CAN_TSR_RQCP0)) {
-            if (now - cycle_sent_ms < 5U) return;
+            if (now - cycle_sent_ms < APP_CAN_TX_TIMEOUT_MS) return;
         } else if (tsr & CAN_TSR_TXOK0) {
             cycle_wait = 0;
             if (cycle_sync) {
@@ -186,7 +200,7 @@ static void process_pdo_cycle(uint32_t now)
             }
         } else {
             /* Arbitration loss/no ACK is a failed cycle with retransmit off. */
-            cycle_sent_ms = now - 5U;
+            cycle_sent_ms = now - APP_CAN_TX_TIMEOUT_MS;
         }
         if (cycle_wait) {
             motor_diagnostics.cycle_tx_errors++;
@@ -194,14 +208,14 @@ static void process_pdo_cycle(uint32_t now)
             for (uint32_t i = 0; i < MOTOR_COUNT; i++)
                 if (nodes[i].pdo_running && motor_status[i].state != MOTOR_ERROR)
                     fail(i, MOTOR_ERR_TX);
-            cycle_due_ms = now + MOTOR_SYNC_PERIOD_MS;
+            cycle_due_ms = now + APP_CAN_CYCLE_MS;
             return;
         }
     }
     if (!cycle_active) {
         if ((int32_t)(now - cycle_due_ms) < 0) return;
-        if (now - cycle_due_ms >= MOTOR_SYNC_PERIOD_MS) motor_diagnostics.cycle_missed++;
-        cycle_due_ms = now + MOTOR_SYNC_PERIOD_MS; /* never replay missed cycles */
+        if (now - cycle_due_ms >= APP_CAN_CYCLE_MS) motor_diagnostics.cycle_missed++;
+        cycle_due_ms = now + APP_CAN_CYCLE_MS; /* never replay missed cycles */
         cycle_active = 1;
         cycle_cursor = 0;
     }
@@ -212,7 +226,9 @@ static void process_pdo_cycle(uint32_t now)
     if (cycle_cursor < MOTOR_COUNT) {
         uint32_t i = cycle_cursor;
         uint8_t enabled = motor_status[i].state == MOTOR_ENABLED && !nodes[i].stop_requested;
-        uint32_t velocity = enabled ? (uint32_t)motor_status[i].target_velocity : 0U;
+        if (enabled) profile_goal(&nodes[i].profile, motor_status[i].target_velocity, now);
+        else profile_reset(&nodes[i].profile, 0);
+        uint32_t velocity = enabled ? (uint32_t)profile_sample(&nodes[i].profile, now) : 0U;
         for (uint32_t j = 0; j < 4; j++) data[j] = (uint8_t)(velocity >> (8U*j));
         data[4] = enabled ? 15U : 2U;
         id = (uint16_t)(0x200U + motor_status[i].node_id);
@@ -224,12 +240,12 @@ static void process_pdo_cycle(uint32_t now)
         cycle_wait = 1;
         if (length) { motor_diagnostics.rpdo_count++; cycle_cursor++; }
         else cycle_sync = 1;
-    } else if (result == HAL_ERROR || now - (cycle_due_ms - MOTOR_SYNC_PERIOD_MS) >= 5U) {
+    } else if (result == HAL_ERROR || now - (cycle_due_ms - APP_CAN_CYCLE_MS) >= APP_CAN_TX_TIMEOUT_MS) {
         motor_diagnostics.cycle_tx_errors++;
         cancel_cycle();
         for (uint32_t i = 0; i < MOTOR_COUNT; i++)
             if (nodes[i].pdo_running && motor_status[i].state != MOTOR_ERROR) fail(i, MOTOR_ERR_TX);
-        cycle_due_ms = now + MOTOR_SYNC_PERIOD_MS;
+        cycle_due_ms = now + APP_CAN_CYCLE_MS;
     }
 }
 
@@ -263,7 +279,7 @@ static void receive(const Frame *f)
             s->statusword = (uint16_t)(f->data[0] | (f->data[1] << 8));
             s->mode_display = (int8_t)f->data[2];
             s->actual_velocity = (int32_t)le32(f->data + 3);
-            s->statusword_ms = s->pdo_ms = s->last_response_ms = clock_ms;
+            s->statusword_ms = s->pdo_ms = s->last_response_ms = AppTime_NowMs();
             s->feedback_valid |= 128U | 256U;
             s->pdo_rx_count++;
             s->rx_count++;
@@ -274,9 +290,31 @@ static void receive(const Frame *f)
                      ((s->statusword & 0x6FU) == 0x07U ||
                       (s->statusword & 0x6FU) == 0x40U)) s->state = MOTOR_STOPPED;
             if ((s->statusword & 8U) && s->state != MOTOR_ERROR) fail(i, MOTOR_ERR_DRIVE);
+            /* Only fresh TPDOs may confirm standstill. Do not infer stopping
+             * from the requested target or repeatedly reuse an old sample. */
+            if (s->state == MOTOR_ENABLED && s->reversal_pending && !n->stop_requested) {
+                if (profile_sample(&n->profile, AppTime_NowMs()) == 0 &&
+                    n->profile.goal == 0 && !n->profile.duration &&
+                    s->actual_velocity >= -MOTOR_REVERSAL_ZERO_BAND &&
+                    s->actual_velocity <= MOTOR_REVERSAL_ZERO_BAND) {
+                    if (!n->reversal_zero_seen) {
+                        n->reversal_zero_seen = 1;
+                        n->reversal_zero_ms = AppTime_NowMs();
+                    } else if (AppTime_NowMs() - n->reversal_zero_ms >= APP_REVERSAL_ZERO_HOLD_MS &&
+                               AppTime_NowMs() - n->command_ms < APP_COMMAND_LEASE_MS &&
+                               AppTime_NowMs() - n->reversal_started_ms < APP_REVERSAL_TIMEOUT_MS) {
+                        s->target_velocity = s->requested_velocity;
+                        profile_goal(&n->profile, s->target_velocity, AppTime_NowMs());
+                        n->last_direction = s->target_velocity > 0 ? 1 : -1;
+                        s->reversal_pending = 0;
+                        n->reversal_zero_seen = 0;
+                        cancel_cycle();
+                    }
+                } else n->reversal_zero_seen = 0;
+            }
         } else if (f->id == 0x700U + s->node_id && f->len == 1U) {
             s->heartbeat_seen = 1;
-            s->heartbeat_ms = clock_ms;
+            s->heartbeat_ms = AppTime_NowMs();
             s->heartbeat_state = f->data[0];
             if (s->state == MOTOR_ENABLED && f->data[0] != 5U)
                 fail(i, MOTOR_ERR_HEARTBEAT);
@@ -300,7 +338,7 @@ static void receive(const Frame *f)
                     s->diagnostic_subindex = n->subindex;
                     n->pending = 0;
                     n->config_step++;
-                    n->next_ms = clock_ms + 1U;
+                    n->next_ms = AppTime_NowMs() + APP_SDO_CONFIG_GAP_MS;
                     continue;
                 }
                 uint32_t bit = feedback_bit(object);
@@ -313,7 +351,7 @@ static void receive(const Frame *f)
                     s->diagnostic_object = object;
                     s->diagnostic_subindex = n->subindex;
                     n->pending = 0;
-                    n->next_ms = clock_ms + 5U;
+                    n->next_ms = AppTime_NowMs() + APP_SDO_STATE_GAP_MS;
                     continue;
                 }
                 s->sdo_abort = le32(&f->data[4]);
@@ -326,10 +364,10 @@ static void receive(const Frame *f)
             uint32_t value = le32(&f->data[4]);
             n->pending = 0;
             s->rx_count++;
-            s->last_response_ms = clock_ms;
+            s->last_response_ms = AppTime_NowMs();
             if (n->configuring == 2U) {
                 n->config_step++;
-                n->next_ms = clock_ms + 1U;
+                n->next_ms = AppTime_NowMs() + APP_SDO_CONFIG_GAP_MS;
                 continue;
             }
             uint32_t previous_valid = s->feedback_valid;
@@ -344,7 +382,7 @@ static void receive(const Frame *f)
                     s->hall_edges++;
                 }
                 s->hall_pattern = pattern;
-                s->hall_ms = clock_ms;
+                s->hall_ms = AppTime_NowMs();
             }
             if (n->read && object == 0x3010U) s->encoder_ppr = value;
             if (n->read && object == 0x3001U) s->configured_pole_pairs = value;
@@ -353,34 +391,34 @@ static void receive(const Frame *f)
                 s->position_delta = s->position_ms ?
                     (int32_t)(value - (uint32_t)s->position_actual) : 0;
                 s->position_actual = (int32_t)value;
-                s->position_ms = clock_ms;
+                s->position_ms = AppTime_NowMs();
             }
             if (n->read && object == 0x30D0U) s->current_demand_ma = (int32_t)value;
             if (n->read && object == 0x30D1U) {
                 s->current_actual_ma = (int32_t)value;
-                s->current_ms = clock_ms;
+                s->current_ms = AppTime_NowMs();
             }
             if (n->read && object == 0x6077U) {
                 s->torque_actual_permille = (int16_t)value;
-                s->torque_ms = clock_ms;
+                s->torque_ms = AppTime_NowMs();
             }
             if (n->read && object == 0x6041U) {
                 s->statusword = (uint16_t)value;
-                s->statusword_ms = clock_ms;
+                s->statusword_ms = AppTime_NowMs();
             }
             if (n->read && object == 0x6061U) s->mode_display = (int8_t)value;
             if (n->read && object == 0x606CU) s->actual_velocity = (int32_t)value;
             if (n->read && object == 0x60FFU) {
                 s->drive_target_velocity = (int32_t)value;
-                s->drive_target_ms = clock_ms;
+                s->drive_target_ms = AppTime_NowMs();
             }
             if (n->read && object == 0x606BU) {
                 s->demand_velocity = (int32_t)value;
-                s->demand_ms = clock_ms;
+                s->demand_ms = AppTime_NowMs();
             }
             if (n->read && object == 0x6040U) {
                 s->drive_controlword = (uint16_t)value;
-                s->controlword_ms = clock_ms;
+                s->controlword_ms = AppTime_NowMs();
             }
             if ((s->statusword & 8U) != 0U) { fail(i, MOTOR_ERR_DRIVE); continue; }
             if (s->state == MOTOR_OFFLINE) s->state = MOTOR_MONITOR;
@@ -390,15 +428,15 @@ static void receive(const Frame *f)
                 if (n->phase == 4U) advance = (s->statusword & 0x6FU) == 0x21U;
                 if (n->phase == 6U) advance = (s->statusword & 0x6FU) == 0x23U;
                 if (n->phase == 8U) advance = (s->statusword & 0x6FU) == 0x27U;
-                if (advance) { n->phase++; n->phase_ms = clock_ms; }
+                if (advance) { n->phase++; n->phase_ms = AppTime_NowMs(); }
                 if (n->phase == 9U) {
                     s->state = MOTOR_ENABLED;
-                    n->command_ms = clock_ms;
+                    n->command_ms = AppTime_NowMs();
                     n->poll = 0;
                     n->pdo_running = 1;
-                    n->pdo_started_ms = clock_ms;
+                    n->pdo_started_ms = AppTime_NowMs();
                     s->pdo_rx_count = 0;
-                    cycle_due_ms = clock_ms;
+                    cycle_due_ms = AppTime_NowMs();
                 }
             } else if (s->state == MOTOR_STOPPING) {
                 if (n->phase == 0U) n->phase = 1;
@@ -407,7 +445,7 @@ static void receive(const Frame *f)
                     s->state = MOTOR_STOPPED;
             } else if (s->state == MOTOR_ENABLED && n->read && object == 0x6041U &&
                        (s->statusword & 0x6FU) != 0x27U) fail(i, MOTOR_ERR_DRIVE);
-            n->next_ms = clock_ms + (s->state == MOTOR_ENABLED ? 20U : 5U);
+            n->next_ms = AppTime_NowMs() + (s->state == MOTOR_ENABLED ? APP_SDO_DIAGNOSTIC_GAP_MS : APP_SDO_STATE_GAP_MS);
         }
     }
 }
@@ -417,7 +455,7 @@ HAL_StatusTypeDef Motor_Init(void)
     CAN_FilterTypeDef filter = {0};
     cancel_cycle();
     sync_seen = 0;
-    master_heartbeat_ms = clock_ms;
+    master_heartbeat_ms = AppTime_NowMs();
     memset(nodes, 0, sizeof(nodes));
     memset((void *)motor_status, 0, sizeof(motor_status));
     uint32_t irq_mask = __get_PRIMASK();
@@ -459,13 +497,12 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
     }
 }
 
-void Motor_Tick1ms(void) { clock_ms++; }
-uint32_t Motor_TimeMs(void) { return clock_ms; }
+uint32_t Motor_TimeMs(void) { return AppTime_NowMs(); }
 
 uint8_t Motor_Enable(uint32_t i)
 {
     if (i >= MOTOR_COUNT || !power_on || nodes[i].pending ||
-        clock_ms - motor_status[i].last_response_ms >= MOTOR_SDO_TIMEOUT_MS ||
+        AppTime_NowMs() - motor_status[i].last_response_ms >= APP_SDO_TIMEOUT_MS ||
         (motor_status[i].state != MOTOR_MONITOR && motor_status[i].state != MOTOR_STOPPED)) return 0;
     uint8_t start[2] = {motor_status[i].pdo_ready ? 1U : 0x80U, motor_status[i].node_id};
     if (send_frame(0, 2, start) != HAL_OK) return 0;
@@ -476,9 +513,14 @@ uint8_t Motor_Enable(uint32_t i)
     if (nodes[i].configuring) motor_status[i].heartbeat_seen = 0;
     motor_status[i].target_velocity = 0;
     motor_status[i].state = MOTOR_ENABLING;
+    profile_reset(&nodes[i].profile, 0);
+    motor_status[i].requested_velocity = 0;
+    motor_status[i].reversal_pending = 0;
+    nodes[i].last_direction = 0;
+    nodes[i].reversal_zero_seen = 0;
     nodes[i].phase = 0;
-    nodes[i].phase_ms = clock_ms;
-    nodes[i].next_ms = clock_ms;
+    nodes[i].phase_ms = AppTime_NowMs();
+    nodes[i].next_ms = AppTime_NowMs();
     return 1;
 }
 
@@ -486,9 +528,29 @@ uint8_t Motor_SetVelocity(uint32_t i, int32_t velocity)
 {
     if (i >= MOTOR_COUNT || motor_status[i].state != MOTOR_ENABLED ||
         !motor_status[i].pdo_rx_count ||
-        clock_ms - motor_status[i].pdo_ms >= MOTOR_PDO_TIMEOUT_MS) return 0;
-    motor_status[i].target_velocity = velocity;
-    nodes[i].command_ms = clock_ms;
+        AppTime_NowMs() - motor_status[i].pdo_ms >= APP_PDO_TIMEOUT_MS) return 0;
+    volatile MotorStatus *s = &motor_status[i];
+    Node *n = &nodes[i];
+    int8_t direction = velocity > 0 ? 1 : velocity < 0 ? -1 : 0;
+    uint8_t opposite_motion = (direction > 0 && s->actual_velocity < -MOTOR_REVERSAL_ZERO_BAND) ||
+                              (direction < 0 && s->actual_velocity > MOTOR_REVERSAL_ZERO_BAND);
+    s->requested_velocity = velocity;
+    if (direction && ((n->last_direction && direction != n->last_direction) || opposite_motion)) {
+        if (!s->reversal_pending) {
+            n->reversal_started_ms = AppTime_NowMs();
+            n->reversal_zero_seen = 0;
+        }
+        s->reversal_pending = 1;
+        s->target_velocity = 0;
+        cancel_cycle();
+    } else {
+        s->reversal_pending = 0;
+        n->reversal_zero_seen = 0;
+        s->target_velocity = velocity;
+        if (direction) n->last_direction = direction;
+    }
+    nodes[i].command_ms = AppTime_NowMs();
+    profile_goal(&n->profile, s->target_velocity, AppTime_NowMs());
     return 1;
 }
 
@@ -497,8 +559,12 @@ uint8_t Motor_QuickStop(uint32_t i)
     if (i >= MOTOR_COUNT || motor_status[i].state == MOTOR_ERROR ||
         motor_status[i].state == MOTOR_OFFLINE) return 0;
     /* Finish an outstanding SDO before issuing another on this node. */
+    profile_reset(&nodes[i].profile, 0);
     motor_status[i].target_velocity = 0;
     nodes[i].stop_requested = 1;
+    motor_status[i].requested_velocity = 0;
+    motor_status[i].reversal_pending = 0;
+    nodes[i].reversal_zero_seen = 0;
     cancel_cycle();
     return 1;
 }
@@ -515,12 +581,14 @@ uint8_t Motor_SetPower(uint8_t on)
                       on ? GPIO_PIN_SET : GPIO_PIN_RESET);
     power_on = on != 0U;
     cancel_cycle();
-    power_on_ms = clock_ms;
+    power_on_ms = AppTime_NowMs();
     for (uint32_t i = 0; i < MOTOR_COUNT; i++) {
         nodes[i].pending = 0;
         nodes[i].pdo_running = nodes[i].configuring = 0;
         motor_status[i].pdo_ready = 0;
-        nodes[i].next_ms = clock_ms + 1500U;
+        motor_status[i].requested_velocity = 0;
+        motor_status[i].reversal_pending = 0;
+        nodes[i].next_ms = AppTime_NowMs() + APP_POWER_ON_SETTLE_MS;
         motor_status[i].heartbeat_seen = 0;
         motor_status[i].startup_retries = 0;
         if (motor_status[i].state != MOTOR_ERROR) motor_status[i].state = MOTOR_OFFLINE;
@@ -533,7 +601,7 @@ uint8_t Motor_KeepAlive(uint32_t i)
     if (i >= MOTOR_COUNT) return 0;
     if (motor_status[i].state == MOTOR_ENABLING) return 1;
     if (motor_status[i].state != MOTOR_ENABLED) return 0;
-    nodes[i].command_ms = clock_ms;
+    nodes[i].command_ms = AppTime_NowMs();
     return 1;
 }
 
@@ -551,20 +619,22 @@ uint8_t Motor_ResetDrivers(void)
     power_on = 0;
     cancel_cycle();
     reset_pending = 1;
-    reset_due_ms = clock_ms + 1000U;
+    reset_due_ms = AppTime_NowMs() + APP_DRIVER_RESET_OFF_MS;
     for (uint32_t i = 0; i < MOTOR_COUNT; i++) {
         memset(&nodes[i], 0, sizeof(nodes[i]));
         motor_status[i].target_velocity = 0;
         motor_status[i].state = MOTOR_RESETTING;
+        motor_status[i].requested_velocity = 0;
+        motor_status[i].reversal_pending = 0;
     }
     return 1;
 }
 
 void Motor_Process(void)
 {
-    uint32_t now = clock_ms;
+    uint32_t now = AppTime_NowMs();
     if (now == process_ms) return;
-    if (now - process_ms > 1U) motor_diagnostics.scheduler_late++;
+    if (now - process_ms > APP_MOTOR_SERVICE_MS) motor_diagnostics.scheduler_late++;
     process_ms = now;
     if (reset_pending) {
         if ((int32_t)(now - reset_due_ms) < 0) return;
@@ -630,30 +700,33 @@ void Motor_Process(void)
         Node *n = &nodes[i];
         if (!power_on || s->state == MOTOR_ERROR) continue;
         /* Safety supervision is independent of outstanding diagnostic SDOs. */
-        if (s->state == MOTOR_ENABLED && now - n->command_ms >= MOTOR_COMMAND_LEASE_MS) {
+        if (s->state == MOTOR_ENABLED && now - n->command_ms >= APP_COMMAND_LEASE_MS) {
             fail(i, MOTOR_ERR_LEASE); continue;
         }
+        if (s->reversal_pending && now - n->reversal_started_ms >= APP_REVERSAL_TIMEOUT_MS) {
+            fail(i, MOTOR_ERR_REVERSAL_TIMEOUT); continue;
+        }
         if (n->pdo_running && now - (s->pdo_rx_count ? s->pdo_ms : n->pdo_started_ms)
-                >= MOTOR_PDO_TIMEOUT_MS) { fail(i, MOTOR_ERR_PDO_TIMEOUT); continue; }
-        if (s->heartbeat_seen && now - s->heartbeat_ms >= 1500U) {
+                >= APP_PDO_TIMEOUT_MS) { fail(i, MOTOR_ERR_PDO_TIMEOUT); continue; }
+        if (s->heartbeat_seen && now - s->heartbeat_ms >= APP_DRIVE_HB_TIMEOUT_MS) {
             fail(i, MOTOR_ERR_HEARTBEAT); continue;
         }
         if (n->pending) {
-            if (now - n->sent_ms >= MOTOR_SDO_TIMEOUT_MS) {
+            if (now - n->sent_ms >= APP_SDO_TIMEOUT_MS) {
                 if (s->state == MOTOR_OFFLINE && n->read && n->object == 0x6041U &&
-                    now - power_on_ms < MOTOR_STARTUP_TIMEOUT_MS) {
+                    now - power_on_ms < APP_STARTUP_TIMEOUT_MS) {
                     /* Only the initial read-only probe may be repeated. A late
                      * response to an identical read is harmless; never repeat
                      * enable/speed writes or recover motion automatically. */
                     n->pending = 0;
-                    n->next_ms = now + 250U;
+                    n->next_ms = now + APP_STARTUP_RETRY_GAP_MS;
                     s->startup_retries++;
                 } else fail(i, MOTOR_ERR_SDO_TIMEOUT);
             }
             continue;
         }
         if (s->state == MOTOR_OFFLINE) {
-            if (now - power_on_ms >= MOTOR_STARTUP_TIMEOUT_MS) {
+            if (now - power_on_ms >= APP_STARTUP_TIMEOUT_MS) {
                 /* Report the initial probe even between retry attempts. */
                 fail(i, MOTOR_ERR_SDO_TIMEOUT);
                 s->failed_object = 0x6041U;
@@ -661,7 +734,7 @@ void Motor_Process(void)
             }
             /* Wait for a usable heartbeat when available. Drives without a
              * heartbeat producer are probed after a fixed 3 s grace period. */
-            if (now - power_on_ms < 3000U &&
+            if (now - power_on_ms < APP_STARTUP_NO_HB_GRACE_MS &&
                 (!s->heartbeat_seen || (s->heartbeat_state != 0x7FU && s->heartbeat_state != 5U)))
                 continue;
         }
@@ -674,7 +747,7 @@ void Motor_Process(void)
             n->configuring = 0;
         }
         if ((s->state == MOTOR_ENABLING || s->state == MOTOR_STOPPING) &&
-            now - n->phase_ms >= MOTOR_STATE_TIMEOUT_MS) { fail(i, MOTOR_ERR_STATE_TIMEOUT); continue; }
+            now - n->phase_ms >= APP_STATE_TIMEOUT_MS) { fail(i, MOTOR_ERR_STATE_TIMEOUT); continue; }
         if ((int32_t)(now - n->next_ms) < 0) continue;
         if (n->configuring) { configure_pdo(i); continue; }
         if (s->state == MOTOR_ENABLING) {
@@ -710,11 +783,11 @@ void Motor_Process(void)
             }
             if (n->pending) {
                 n->poll = (uint8_t)((n->poll + 1U) % 7U);
-                n->next_ms = now + 20U;
+                n->next_ms = now + APP_SDO_DIAGNOSTIC_GAP_MS;
             }
         } else if (s->state == MOTOR_MONITOR &&
                    (s->statusword & 0x6FU) == 0x40U &&
-                   now - s->statusword_ms < MOTOR_SDO_TIMEOUT_MS) {
+                   now - s->statusword_ms < APP_SDO_TIMEOUT_MS) {
             /* Passive hand-turn acquisition: no output-enabling writes.
              * Read position before/after Hall, and continue confirming disabled. */
             static const uint16_t objects[7] = {0x6041, 0x3010, 0x3001, 0x60A8, 0x6064, 0x301A, 0x6064};
@@ -733,8 +806,8 @@ void Motor_Process(void)
     process_pdo_cycle(now);
     /* Heartbeat production follows successful cyclic service. If the MCU
      * freezes or PDO service fails, the drive's 300 ms consumer stops it. */
-    if (power_on && sync_seen && now - motor_diagnostics.sync_ms < 30U &&
-        now - master_heartbeat_ms >= MOTOR_MASTER_HEARTBEAT_MS) {
+    if (power_on && sync_seen && now - motor_diagnostics.sync_ms < APP_SYNC_HEALTH_WINDOW_MS &&
+        now - master_heartbeat_ms >= APP_MASTER_HEARTBEAT_MS) {
         uint8_t state = 5;
         if (send_frame((uint16_t)(0x700U + MOTOR_MASTER_NODE_ID), 1, &state) == HAL_OK)
             master_heartbeat_ms = now;

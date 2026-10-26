@@ -2,19 +2,13 @@
 #define MOTOR_H
 
 #include "main.h"
+#include "app_timing.h"
 
 /* Configured nodes are independent. Set to 2 to include node 2. */
 #define MOTOR_COUNT 1U
 #define MOTOR_CAPACITY 2U
-#define MOTOR_SDO_TIMEOUT_MS 200U
-#define MOTOR_STATE_TIMEOUT_MS 3000U
-#define MOTOR_COMMAND_LEASE_MS 1000U
-#define MOTOR_STARTUP_TIMEOUT_MS 8000U
-#define MOTOR_SYNC_PERIOD_MS 10U
-#define MOTOR_PDO_TIMEOUT_MS 100U
 #define MOTOR_MASTER_NODE_ID 127U
-#define MOTOR_MASTER_HEARTBEAT_MS 100U
-#define MOTOR_CONSUMER_TIMEOUT_MS 300U
+#define MOTOR_REVERSAL_ZERO_BAND 5 /* Configured EPOS velocity units (rpm here). */
 /* No application speed cap. Velocity uses signed 32-bit EPOS units (0x60A9). */
 
 typedef enum {
@@ -26,7 +20,7 @@ typedef enum {
     MOTOR_ERR_NONE, MOTOR_ERR_SDO_TIMEOUT, MOTOR_ERR_SDO_ABORT,
     MOTOR_ERR_PROTOCOL, MOTOR_ERR_STATE_TIMEOUT, MOTOR_ERR_DRIVE,
     MOTOR_ERR_HEARTBEAT, MOTOR_ERR_CAN, MOTOR_ERR_RX_OVERFLOW,
-    MOTOR_ERR_LEASE, MOTOR_ERR_TX, MOTOR_ERR_PDO_TIMEOUT
+    MOTOR_ERR_LEASE, MOTOR_ERR_TX, MOTOR_ERR_PDO_TIMEOUT, MOTOR_ERR_REVERSAL_TIMEOUT
 } MotorError;
 
 typedef struct {
@@ -64,6 +58,8 @@ typedef struct {
     uint32_t encoder_ppr, configured_pole_pairs, position_unit, statusword_ms;
     uint32_t pdo_rx_count, pdo_ms;
     uint8_t pdo_ready;
+    int32_t requested_velocity; /* User request; target stays zero during reversal. */
+    uint8_t reversal_pending;
 } MotorStatus;
 
 typedef struct {
@@ -93,7 +89,6 @@ extern volatile MotorDiagnostics motor_diagnostics;
 extern volatile MotorDebugCommand motor_debug;
 
 HAL_StatusTypeDef Motor_Init(void);
-void Motor_Tick1ms(void); /* TIM6 ISR: timestamp only. */
 void Motor_Process(void); /* main context only */
 uint8_t Motor_Enable(uint32_t index);
 uint8_t Motor_SetVelocity(uint32_t index, int32_t velocity);

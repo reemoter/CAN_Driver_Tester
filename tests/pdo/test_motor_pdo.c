@@ -1,7 +1,10 @@
 /* Includes production code so the mocked HAL exercises its real state machine. */
 #include <assert.h>
 #include <stdio.h>
+#include <stdint.h>
+static uint32_t clock_ms;
 #include "motor.c"
+uint32_t AppTime_NowMs(void) { return clock_ms; }
 CAN_TypeDef fake_can;
 CAN_HandleTypeDef hcan1 = { &fake_can };
 static Frame sent[2048];
@@ -57,6 +60,7 @@ static void arm(uint32_t i)
     motor_status[i].pdo_ms = clock_ms;
     motor_status[i].statusword = 0x27;
     motor_status[i].target_velocity = -250;
+    profile_reset(&nodes[i].profile, -250); /* already running fixture */
     nodes[i].pdo_running = 1;
     nodes[i].command_ms = clock_ms;
     nodes[i].next_ms = clock_ms + 100;
@@ -82,6 +86,44 @@ static void ack(uint32_t i, uint8_t code)
 }
 int main(void)
 {
+    MotorProfile p = {0};
+    profile_goal(&p,150,100);
+    uint32_t duration = p.duration;
+    assert(duration >= 937 && duration <= 938);
+    assert(profile_sample(&p,100) == 0);
+    assert(profile_sample(&p,150) == 0); /* soft start */
+    assert(profile_sample(&p,100+duration/2) >= 74);
+    profile_goal(&p,150,100+duration/2);
+    assert(p.started == 100); /* duplicate UDP target cannot restart ramp */
+    assert(profile_sample(&p,100+duration) == 150 && !p.duration && p.acceleration == 0);
+    profile_goal(&p,0,2000);
+    assert(profile_sample(&p,2000+duration/2) >= 75);
+    assert(profile_sample(&p,2000+duration) == 0);
+    profile_goal(&p,-150,4000);
+    int32_t midpoint = profile_sample(&p,4000+duration/2);
+    assert(midpoint <= -74 && midpoint >= -75);
+    double before = p.acceleration;
+    profile_goal(&p,-100,4000+duration/2);
+    assert(profile_sample(&p,4000+duration/2) == midpoint && p.acceleration == before);
+    profile_reset(&p,0);
+    profile_goal(&p,150,UINT32_MAX-249U);
+    duration = p.duration;
+    assert(profile_sample(&p,UINT32_MAX-249U+duration) == 150);
+    profile_goal(&p,INT32_MIN,2000);
+    assert(profile_sample(&p,2000+p.duration) == INT32_MIN);
+    /* A rejected ramp setting must never permit enable. */
+    for (uint32_t step = 26; step <= 28; step++) {
+        reset_test();
+        motor_status[0].state = MOTOR_ENABLING;
+        nodes[0].configuring = 2;
+        nodes[0].config_step = (uint8_t)step;
+        configure_pdo(0);
+        assert(nodes[0].pending);
+        ack(0, 0x80);
+        assert(motor_status[0].state == MOTOR_ERROR &&
+               motor_status[0].error == MOTOR_ERR_SDO_ABORT &&
+               !motor_status[0].pdo_ready);
+    }
     reset_test();
     motor_status[0].state = MOTOR_MONITOR;
     motor_status[0].last_response_ms = clock_ms;
@@ -99,11 +141,21 @@ int main(void)
     }
     configure_pdo(0);
     assert(motor_status[0].pdo_ready && !nodes[0].configuring);
+    /* Ramp writes are mandatory commissioning steps, before NMT operational. */
+    assert(pdo_settings[26].object == 0x6083 && pdo_settings[26].size == 4 &&
+           pdo_settings[26].value == MOTOR_PROFILE_ACCELERATION);
+    assert(pdo_settings[27].object == 0x6084 && pdo_settings[27].size == 4 &&
+           pdo_settings[27].value == MOTOR_PROFILE_DECELERATION);
+    assert(pdo_settings[28].object == 0x6086 && pdo_settings[28].size == 2 &&
+           pdo_settings[28].value == 0);
+    for (uint32_t j = 0; j < PDO_SETTINGS_COUNT; j++)
+        assert(pdo_settings[j].object != 0x6085);
     assert(motor_status[0].diagnostic_object == 0x1029 &&
            motor_status[0].diagnostic_abort == 0x06020000);
     assert(sent[sent_count-1].id == 0 && sent[sent_count-1].data[0] == 1);
     assert(pdo_settings[9].value == 0x60ff0020 && pdo_settings[10].value == 0x60400010);
-    assert(pdo_settings[25].value == ((127U << 16) | 300U));
+    assert(pdo_settings[25].value == ((MOTOR_MASTER_NODE_ID << 16) | APP_CONSUMER_TIMEOUT_MS));
+    assert(pdo_settings[21].value == APP_DRIVE_HEARTBEAT_MS);
     /* The original zero-speed enable sequence remains SDO-confirmed. */
     for (uint32_t phase = 0; phase <= 8; phase++) {
         clock_ms += 20;
@@ -184,17 +236,17 @@ int main(void)
 
     reset_test(); arm(0);
     nodes[0].pending = 1; nodes[0].object = 0x6064; nodes[0].sent_ms = clock_ms;
-    motor_status[0].pdo_ms = clock_ms - MOTOR_PDO_TIMEOUT_MS;
+    motor_status[0].pdo_ms = clock_ms - APP_PDO_TIMEOUT_MS;
     Motor_Process(); assert(motor_status[0].error == MOTOR_ERR_PDO_TIMEOUT);
 
     reset_test(); arm(0);
     nodes[0].pending = 1; nodes[0].sent_ms = clock_ms;
-    nodes[0].command_ms = clock_ms - MOTOR_COMMAND_LEASE_MS;
+    nodes[0].command_ms = clock_ms - APP_COMMAND_LEASE_MS;
     Motor_Process(); assert(motor_status[0].error == MOTOR_ERR_LEASE);
 
     reset_test(); arm(0);
     motor_status[0].pdo_rx_count = 0;
-    nodes[0].pdo_started_ms = clock_ms - MOTOR_PDO_TIMEOUT_MS;
+    nodes[0].pdo_started_ms = clock_ms - APP_PDO_TIMEOUT_MS;
     Motor_Process(); assert(motor_status[0].error == MOTOR_ERR_PDO_TIMEOUT);
 
     reset_test(); arm(0);
@@ -215,7 +267,7 @@ int main(void)
 
     reset_test(); arm(0);
     cycle_due_ms = clock_ms + 100; /* heartbeat is only permitted after a real SYNC */
-    master_heartbeat_ms = clock_ms - MOTOR_MASTER_HEARTBEAT_MS;
+    master_heartbeat_ms = clock_ms - APP_MASTER_HEARTBEAT_MS;
     Motor_Process(); assert(!sent_count);
     sync_seen = 1; motor_diagnostics.sync_ms = ++clock_ms;
     Motor_Process(); assert(sent_count == 1 && sent[0].id == 0x77f);
@@ -223,6 +275,63 @@ int main(void)
     nodes[0].command_ms = clock_ms; nodes[0].next_ms = clock_ms + 100;
     sent_count = 0; cycle_due_ms = clock_ms + 100;
     Motor_Process(); assert(!sent_count); /* stale SYNC suppresses heartbeat */
-    puts("PDO state-machine tests passed");
+    /* Reverse requests ramp to zero, then wait for fresh stable feedback. */
+    reset_test(); arm(0); assert(Motor_SetVelocity(0,250));
+    profile_reset(&nodes[0].profile,250);
+    tpdo(0,0x27,250,7);
+    assert(Motor_SetVelocity(0,-250));
+    assert(motor_status[0].reversal_pending && motor_status[0].target_velocity == 0);
+    assert(motor_status[0].requested_velocity == -250);
+    process_pdo_cycle(clock_ms);
+    assert(sent[sent_count-1].id == 0x201 && le32(sent[sent_count-1].data) == 250);
+    tpdo(0,0x27,0,7); /* actual zero alone cannot release unfinished ramp */
+    assert(motor_status[0].reversal_pending);
+    clock_ms += nodes[0].profile.duration;
+    nodes[0].command_ms = clock_ms; /* keepalive during normal ramp */
+    tpdo(0,0x27,0,7);
+    clock_ms += APP_REVERSAL_ZERO_HOLD_MS - 1;
+    tpdo(0,0x27,0,7); assert(motor_status[0].reversal_pending);
+    clock_ms++; tpdo(0,0x27,-1,7);
+    assert(!motor_status[0].reversal_pending && motor_status[0].target_velocity == -250);
+    process_pdo_cycle(clock_ms);
+    assert((int32_t)le32(sent[sent_count-1].data) == 0); /* reverse soft start */
+    tpdo(0,0x27,-250,7); assert(Motor_SetVelocity(0,150));
+    assert(motor_status[0].reversal_pending && motor_status[0].target_velocity == 0);
+    assert(Motor_SetVelocity(0,0));
+    clock_ms += APP_REVERSAL_ZERO_HOLD_MS; tpdo(0,0x27,0,7);
+    assert(!motor_status[0].reversal_pending && motor_status[0].target_velocity == 0);
+
+    reset_test(); arm(0); assert(Motor_SetVelocity(0,250));
+    assert(Motor_SetVelocity(0,-250)); tpdo(0,0x27,0,7);
+    clock_ms += APP_REVERSAL_ZERO_HOLD_MS - 1;
+    tpdo(0,0x27,MOTOR_REVERSAL_ZERO_BAND+1,7); /* movement restarts hold */
+    clock_ms++; tpdo(0,0x27,0,7);
+    assert(motor_status[0].reversal_pending);
+    assert(Motor_QuickStop(0));
+    clock_ms += APP_REVERSAL_ZERO_HOLD_MS; tpdo(0,0x27,0,7);
+    assert(!motor_status[0].reversal_pending && !motor_status[0].requested_velocity);
+
+    reset_test(); arm(0); assert(Motor_SetVelocity(0,250));
+    assert(Motor_SetVelocity(0,-250));
+    clock_ms += APP_REVERSAL_TIMEOUT_MS;
+    motor_status[0].pdo_ms = nodes[0].command_ms = clock_ms;
+    Motor_Process(); assert(motor_status[0].error == MOTOR_ERR_REVERSAL_TIMEOUT);
+    assert(!motor_status[0].reversal_pending && !motor_status[0].requested_velocity);
+
+    reset_test(); arm(0); assert(Motor_SetVelocity(0,250));
+    assert(Motor_SetVelocity(0,-250)); tpdo(0,0x27,0,7);
+    clock_ms += APP_COMMAND_LEASE_MS;
+    tpdo(0,0x27,0,7); assert(motor_status[0].target_velocity == 0);
+    Motor_Process(); assert(motor_status[0].error == MOTOR_ERR_LEASE);
+
+    reset_test(); arm(0); assert(Motor_SetVelocity(0,INT32_MIN));
+    process_pdo_cycle(clock_ms); assert((int32_t)le32(sent[sent_count-1].data) == -250);
+    tpdo(0,0x27,-250,7); assert(Motor_SetVelocity(0,250));
+    assert(motor_status[0].reversal_pending);
+#if MOTOR_COUNT == 2
+    arm(1); assert(Motor_SetVelocity(1,333));
+    assert(motor_status[1].target_velocity == 333 && !motor_status[1].reversal_pending);
+#endif
+    puts("PDO and direction-reversal state-machine tests passed");
     return 0;
 }

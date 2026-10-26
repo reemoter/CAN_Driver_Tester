@@ -1,2 +1,2 @@
-../Core/Src/ether_phy.c:8:16:read_phy	2
-../Core/Src/ether_phy.c:15:6:EthernetPhy_Check	30
+../Core/Src/ether_phy.c:9:16:read_phy	2
+../Core/Src/ether_phy.c:16:6:EthernetPhy_Check	30

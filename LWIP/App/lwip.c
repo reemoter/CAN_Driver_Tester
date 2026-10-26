@@ -118,6 +118,9 @@ void MX_LWIP_Init(void)
 static void Ethernet_Link_Periodic_Handle(struct netif *netif)
 {
 /* USER CODE BEGIN 4_4_1 */
+  /* AppScheduler owns PHY polling. Disable the generated SysTick schedule. */
+  (void)netif;
+#if 0
 /* USER CODE END 4_4_1 */
 
   /* Ethernet Link every 100ms */
@@ -127,6 +130,7 @@ static void Ethernet_Link_Periodic_Handle(struct netif *netif)
     ethernet_link_check_state(netif);
   }
 /* USER CODE BEGIN 4_4 */
+#endif
 /* USER CODE END 4_4 */
 }
 
