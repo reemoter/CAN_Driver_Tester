@@ -92,6 +92,8 @@ HAL_StatusTypeDef Motor_Init(void);
 void Motor_Process(void); /* main context only */
 uint8_t Motor_Enable(uint32_t index);
 uint8_t Motor_SetVelocity(uint32_t index, int32_t velocity);
+/* Cancel the trajectory and publish zero at the next CAN cycle; stay enabled. */
+uint8_t Motor_ZeroTarget(uint32_t index);
 uint8_t Motor_QuickStop(uint32_t index);
 uint8_t Motor_SetPower(uint8_t on);
 uint8_t Motor_KeepAlive(uint32_t index);

@@ -1,0 +1,8 @@
+../Core/Src/lift_motion.c:11:9:Lift_Busy	4	static
+../Core/Src/lift_motion.c:15:6:Lift_Init	24	static
+../Core/Src/lift_motion.c:17:16:sensors_valid	16	static
+../Core/Src/lift_motion.c:23:16:stationary	24	static
+../Core/Src/lift_motion.c:31:9:Lift_Start	80	static
+../Core/Src/lift_motion.c:76:13:stop_at	16	static
+../Core/Src/lift_motion.c:91:6:Lift_Cancel	8	static
+../Core/Src/lift_motion.c:100:6:Lift_Process	24	static

@@ -14,7 +14,11 @@ STATES = ['OFFLINE', 'MONITOR', 'ENABLING', 'ENABLED', 'STOPPING', 'STOPPED', 'E
 ERRORS = ['NONE', 'SDO_TIMEOUT', 'SDO_ABORT', 'PROTOCOL', 'STATE_TIMEOUT', 'DRIVE',
           'HEARTBEAT', 'CAN', 'RX_OVERFLOW', 'LEASE', 'TX', 'PDO_TIMEOUT', 'REVERSAL_TIMEOUT']
 RESULTS = ['OK', 'BAD_PACKET', 'BAD_COMMAND', 'BAD_INDEX', 'STATE_OR_BUSY',
-           'VELOCITY_RANGE', 'RESERVED', 'STALE_SEQUENCE', 'OTHER_CONTROLLER']
+           'VELOCITY_RANGE', 'RESERVED', 'STALE_SEQUENCE', 'OTHER_CONTROLLER',
+           'SENSOR_NOT_READY', 'BOTH_LIMITS_ACTIVE']
+LIFT_STATES = ['IDLE', 'UP', 'DOWN', 'STOPPING', 'DONE', 'CANCELLED', 'ERROR', 'REVERSING']
+LIFT_REASONS = ['NONE', 'LIMIT', 'USER_STOP', 'TIMEOUT', 'SENSOR_INVALID',
+                'SENSOR_CONFLICT', 'MOTOR_ERROR', 'STOP_TIMEOUT', 'INTERRUPTED']
 
 
 def encode(sequence, command, index=0, value=0):
@@ -32,7 +36,7 @@ def direction_velocity(magnitude, direction):
 
 
 def decode(data, sequence, command, index):
-    if len(data) not in (56, 128, 168) or data[:4] != b'ABR1':
+    if len(data) not in (56, 128, 168, 192) or data[:4] != b'ABR1':
         raise ValueError('Invalid reply format')
     if struct.unpack_from('<I', data, 4)[0] != sequence or data[8:10] != bytes((command, index)):
         return None  # late reply from another request
@@ -51,10 +55,15 @@ def decode(data, sequence, command, index):
         result.update(zip(names, fields))
         result['reversal_supported'] = bool(data[103] & 0x80)
         result['reversal_pending'] = bool(data[103] & 1)
-    if len(data) == 168:
+    if len(data) >= 168:
         result.update(zip(('hall', 'pdo_ready', 'hall_ms', 'hall_edges', 'hall_skipped',
                            'hall_invalid', 'encoder_ppr', 'pole_pairs', 'position_unit', 'statusword_ms', 'pdo_rx'),
                           struct.unpack_from('<HHIIIIIIIII', data, 128)))
+    if len(data) == 192:
+        result.update(zip(('lift_state', 'lift_reason', 'sensor_raw', 'sensor_active',
+                           'sensor_valid', 'lift_motor', 'lift_revision', 'lift_reserved',
+                           'lift_started', 'lift_elapsed', 'lift_speed', 'lift_timeout'),
+                          struct.unpack_from('<8BIIiI', data, 168)))
     return result
 
 
@@ -147,6 +156,10 @@ def gui(args):
         try:
             i = int(index.get())
             v = direction_velocity(velocity.get(), direction.get()) if command == 2 and not zero else 0
+            if command in (10, 11):
+                v = int(velocity.get())
+                if i != 0 or not 0 < v <= 2**31-1:
+                    raise ValueError('Up/Down: motor index 0, positive speed magnitude required.')
             if i not in (0, 1) or not -(2**31) <= v <= 2**31 - 1:
                 raise ValueError('Use motor index 0/1 and a valid 32-bit velocity.')
             commands.put((command, i, v))
@@ -167,6 +180,13 @@ def gui(args):
     for text, cmd in [('Power ON', 4), ('Enable at zero', 1), ('Set velocity', 2),
                       ('QUICK STOP', 3), ('Power OFF', 5), ('Reset drivers', 7)]:
         ttk.Button(buttons, text=text, command=lambda c=cmd: submit(c)).pack(side='left', padx=2)
+    lift_buttons = ttk.Frame(root, padding=(10, 0))
+    lift_buttons.pack(fill='x')
+    ttk.Button(lift_buttons, text='Up (S1)', command=lambda: submit(10)).pack(side='left')
+    ttk.Button(lift_buttons, text='Down (S2)', command=lambda: submit(11)).pack(side='left', padx=4)
+    ttk.Label(lift_buttons, text='Use RPM magnitude above. Enable first. Limit detection sends immediate target zero.').pack(side='left')
+    lift_feedback = tk.StringVar(value='Limits / Up-Down: waiting for firmware status.')
+    ttk.Label(root, textvariable=lift_feedback, wraplength=990).pack(anchor='w', padx=10)
     ttk.Label(root, text='Enable starts automatic 100 ms keepalive. Link loss stops renewal; no automatic re-enable.',
               wraplength=730).pack(anchor='w', padx=10)
     ttk.Label(root, text='Velocity uses device units. Actual velocity is only sampled while ENABLED; other states may show stale data.',
@@ -221,6 +241,7 @@ def gui(args):
     def worker():
         client, armed, selected = None, None, 0
         next_poll = 0
+        lift_protocol = True
         while not stop.is_set():
             try:
                 cmd, i, v = commands.get(timeout=0.02)
@@ -235,6 +256,7 @@ def gui(args):
                         client.close()
                     client = None
                     client = Client(i, args.port, args.bind)
+                    lift_protocol = True
                     events.put(('log', 'Connected socket; querying MCU status (no motion).'))
                 elif cmd is not None:
                     if not client:
@@ -246,11 +268,11 @@ def gui(args):
                     selected = i
                     if cmd == 3:
                         armed = None
-                    reply = client.request(cmd, i, v if cmd == 2 else 0)
+                    reply = client.request(cmd, i, v if cmd in (2, 10, 11) else 0)
                     detail = f' | requested velocity={v}' if cmd == 2 else ''
                     events.put(('log', f'Command {cmd}: {label(RESULTS, reply["result"])}{detail}'))
                     events.put(('status', reply))
-                    if cmd == 1 and reply['result'] == 0:
+                    if cmd in (1, 10, 11) and reply['result'] == 0:
                         armed = i
                     if cmd == 7 and reply['result'] == 0:
                         armed = None
@@ -262,7 +284,10 @@ def gui(args):
                         if reply['result'] or reply['state'] not in (2, 3):
                             armed = None
                             events.put(('log', 'Keepalive stopped: motor not enabled/enabling.'))
-                    reply = client.request(9, selected)
+                    reply = client.request(12 if lift_protocol else 9, selected)
+                    if lift_protocol and reply['result'] == 2:
+                        lift_protocol = False
+                        reply = client.request(9, selected)
                     events.put(('status', reply))
             except (OSError, ValueError) as exc:
                 previous, armed = armed, None
@@ -290,6 +315,14 @@ def gui(args):
                 break
             if kind == 'status':
                 r = value
+                if 'lift_state' in r:
+                    sensors = []
+                    for j in range(2):
+                        sensors.append(f'S{j+1}=' + ('UNKNOWN' if not r['sensor_valid'] & (1 << j)
+                                       else 'ACTIVE' if r['sensor_active'] & (1 << j) else 'clear'))
+                    lift_feedback.set(' | '.join(sensors) +
+                        f' | Lift {label(LIFT_STATES,r["lift_state"])} / {label(LIFT_REASONS,r["lift_reason"])}'
+                        f' | elapsed={r["lift_elapsed"]} ms / timeout={r["lift_timeout"]} ms')
                 if measurement_start is not None and turn_phase == 1 and (
                         r['state'] != 1 or r['statusword'] & 0x6f != 0x40 or
                         r['node'] != measurement_start['node']):

@@ -17,8 +17,9 @@
 ../Core/Src/motor.c:500:10:Motor_TimeMs	1
 ../Core/Src/motor.c:502:9:Motor_Enable	10
 ../Core/Src/motor.c:527:9:Motor_SetVelocity	17
-../Core/Src/motor.c:557:9:Motor_QuickStop	4
-../Core/Src/motor.c:572:9:Motor_SetPower	8
-../Core/Src/motor.c:599:9:Motor_KeepAlive	4
-../Core/Src/motor.c:608:9:Motor_ResetDrivers	8
-../Core/Src/motor.c:633:6:Motor_Process	93
+../Core/Src/motor.c:557:9:Motor_ZeroTarget	4
+../Core/Src/motor.c:572:9:Motor_QuickStop	4
+../Core/Src/motor.c:587:9:Motor_SetPower	8
+../Core/Src/motor.c:614:9:Motor_KeepAlive	4
+../Core/Src/motor.c:623:9:Motor_ResetDrivers	8
+../Core/Src/motor.c:648:6:Motor_Process	93

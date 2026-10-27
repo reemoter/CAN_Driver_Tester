@@ -1,0 +1,2 @@
+../Core/Src/limit_sensor.c:12:6:LimitSensor_Init	8	static
+../Core/Src/limit_sensor.c:20:6:LimitSensor_Process	40	static

@@ -2,19 +2,22 @@
 #include "app_time.h"
 #include "app_timing.h"
 #include "motor.h"
-#include "lwip.h"
-#include "ethernetif.h"
-
-extern struct netif gnetif; /* CubeMX's interface instance in lwip.c */
+#include "ether_phy.h"
+#include "limit_sensor.h"
+#include "lift_motion.h"
 
 typedef struct { uint32_t period_ms; void (*run)(void); } AppTask;
 
-static void check_ethernet_link(void) { ethernet_link_check_state(&gnetif); }
+/* Call application-owned PHY glue directly. CubeMX regenerates the BSP
+ * ethernet_link_check_state() body as empty; it is not our extension point. */
+static void check_ethernet_link(void) { EthernetPhy_Process(); }
 
-/* Periodic task registry: motor transactions first, link maintenance second.
+/* Periodic task registry: sensor sampling, motor transactions, link maintenance.
  * CAN cycle launches and response-dependent SDO deadlines remain in motor.c;
  * every one uses AppTime and the settings in app_timing.h. */
 static const AppTask tasks[APP_TASK_COUNT] = {
+    [APP_TASK_LIMIT_SENSOR] = {APP_LIMIT_SENSOR_SAMPLE_MS, LimitSensor_Process},
+    [APP_TASK_LIFT] = {APP_LIFT_SERVICE_MS, Lift_Process},
     [APP_TASK_MOTOR] = {APP_MOTOR_SERVICE_MS, Motor_Process},
     [APP_TASK_ETH_LINK] = {APP_ETH_LINK_CHECK_MS, check_ethernet_link}
 };
@@ -23,6 +26,8 @@ volatile AppTaskDiagnostics app_task_diagnostics[APP_TASK_COUNT];
 
 void AppScheduler_Init(void)
 {
+    LimitSensor_Init();
+    Lift_Init();
     uint32_t now = AppTime_NowMs();
     for (uint32_t i = 0; i < APP_TASK_COUNT; i++) {
         last_run[i] = now;

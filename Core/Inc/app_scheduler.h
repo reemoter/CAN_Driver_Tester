@@ -2,7 +2,7 @@
 #define APP_SCHEDULER_H
 #include <stdint.h>
 
-enum { APP_TASK_MOTOR, APP_TASK_ETH_LINK, APP_TASK_COUNT };
+enum { APP_TASK_LIMIT_SENSOR, APP_TASK_LIFT, APP_TASK_MOTOR, APP_TASK_ETH_LINK, APP_TASK_COUNT };
 typedef struct {
     uint32_t period_ms, runs, missed, max_lateness_ms, last_run_ms;
 } AppTaskDiagnostics;

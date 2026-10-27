@@ -6,6 +6,8 @@
 "./Core/Src/ether_msp.o"
 "./Core/Src/ether_phy.o"
 "./Core/Src/gpio.o"
+"./Core/Src/lift_motion.o"
+"./Core/Src/limit_sensor.o"
 "./Core/Src/main.o"
 "./Core/Src/motor.o"
 "./Core/Src/stm32f4xx_hal_msp.o"

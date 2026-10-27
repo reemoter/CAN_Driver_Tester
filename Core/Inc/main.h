@@ -57,18 +57,14 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define OUTPUT_ABS_CLOCK_Pin GPIO_PIN_8
-#define OUTPUT_ABS_CLOCK_GPIO_Port GPIOE
-#define INPUT_ABS_DATA_Pin GPIO_PIN_9
-#define INPUT_ABS_DATA_GPIO_Port GPIOE
 #define OUTPUT_PWR_EPOS4_Pin GPIO_PIN_8
 #define OUTPUT_PWR_EPOS4_GPIO_Port GPIOD
 #define OUTPUT_PWR_LED_Pin GPIO_PIN_9
 #define OUTPUT_PWR_LED_GPIO_Port GPIOD
-#define INPUT_DEVICE0_Pin GPIO_PIN_0
-#define INPUT_DEVICE0_GPIO_Port GPIOD
-#define INPUT_DEVICE1_Pin GPIO_PIN_1
-#define INPUT_DEVICE1_GPIO_Port GPIOD
+#define INPUT_S2_Pin GPIO_PIN_0
+#define INPUT_S2_GPIO_Port GPIOD
+#define INPUT_S1_Pin GPIO_PIN_1
+#define INPUT_S1_GPIO_Port GPIOD
 #define OUTPUT_LED0_Pin GPIO_PIN_2
 #define OUTPUT_LED0_GPIO_Port GPIOD
 #define OUTPUT_LED1_Pin GPIO_PIN_3

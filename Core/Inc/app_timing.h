@@ -6,6 +6,11 @@
  * independent. TIM6's generated hardware configuration must remain 1 ms. */
 
 /* Periodic work. Motor service advances nonblocking CAN transactions. */
+#define APP_LIMIT_SENSOR_SAMPLE_MS       1U
+#define APP_LIMIT_SENSOR_FILTER_MS       5U
+#define APP_LIMIT_SENSOR_MAX_GAP_MS     10U
+#define APP_LIFT_SERVICE_MS              1U
+#define APP_LIFT_MOVE_TIMEOUT_MS     10000U
 #define APP_MOTOR_SERVICE_MS             1U
 #define APP_CAN_CYCLE_MS                10U
 #define APP_MASTER_HEARTBEAT_MS        100U
@@ -40,6 +45,16 @@
 #define APP_DRIVER_RESET_OFF_MS       1000U
 
 _Static_assert(APP_MOTOR_SERVICE_MS == 1U, "Motor transaction engine needs 1 ms service");
+_Static_assert(APP_LIFT_SERVICE_MS == APP_LIMIT_SENSOR_SAMPLE_MS &&
+               APP_LIFT_MOVE_TIMEOUT_MS > APP_STATE_TIMEOUT_MS &&
+               APP_LIFT_MOVE_TIMEOUT_MS < 0x80000000U,
+               "Lift must follow sensor sampling with a bounded move timeout");
+_Static_assert(APP_LIMIT_SENSOR_SAMPLE_MS > 0U &&
+               APP_LIMIT_SENSOR_FILTER_MS >= APP_LIMIT_SENSOR_SAMPLE_MS &&
+               APP_LIMIT_SENSOR_MAX_GAP_MS >= APP_LIMIT_SENSOR_SAMPLE_MS &&
+               APP_LIMIT_SENSOR_MAX_GAP_MS < 0x80000000U &&
+               APP_LIMIT_SENSOR_FILTER_MS < 0x80000000U,
+               "Limit sensor filter must cover at least one sample interval");
 _Static_assert(APP_CAN_CYCLE_MS >= 4U * APP_MOTOR_SERVICE_MS && APP_CAN_CYCLE_MS < 0x20000000U,
                "Allow service slots for two RPDOs, SYNC and completion");
 _Static_assert(APP_ETH_LINK_CHECK_MS > 0U && APP_ETH_LINK_CHECK_MS < 0x80000000U,

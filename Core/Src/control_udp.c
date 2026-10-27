@@ -2,6 +2,8 @@
 #include "motor.h"
 #include "app_time.h"
 #include "board_identity.h"
+#include "lift_motion.h"
+#include "limit_sensor.h"
 #include "lwip/udp.h"
 #include "lwip/pbuf.h"
 #include <string.h>
@@ -43,7 +45,13 @@ static uint8_t active(void)
 static uint8_t execute(uint8_t command, uint8_t i, int32_t value)
 {
     if (i>=MOTOR_COUNT) return 3;
-    if (command==0 || command==8 || command==9) return 0;
+    if (command==0 || command==8 || command==9 || command==12) return 0;
+    if (command==10 || command==11) return Lift_Start(i,command==10,value);
+    if (Lift_Busy() && (command==1 || command==2 || command==4 || command==5 || command==7)) {
+        if (command==2 && value==0 && i==LIFT_MOTOR_INDEX) { Lift_Cancel(); return 0; }
+        return 4; /* no competing manual motion or implicit power/enable changes */
+    }
+    if (command==3) Lift_Cancel();
     if (command==1) return Motor_Enable(i) ? 0 : 4;
     if (command==2) return Motor_SetVelocity(i,value) ? 0 : 4;
     if (command==3) return Motor_QuickStop(i) ? 0 : 4;
@@ -66,9 +74,9 @@ static void receive(void *arg, struct udp_pcb *pcb, struct pbuf *p,
     uint8_t command=request[8], index=request[9], result=0;
     uint8_t same=have_owner && owner_port==port && ip_addr_cmp(&owner,addr);
     if (request[10] || request[11]) result=1;
-    else if (command>9) result=2;
+    else if (command>12) result=2;
     else if (index>=MOTOR_COUNT) result=3;
-    else if (command>=1 && command<=7) {
+    else if ((command>=1 && command<=7) || command==10 || command==11) {
         if (!same && have_owner && (active() || now-owner_ms<APP_CONTROL_OWNER_GRACE_MS)) result=8;
         else {
             if (!same) {
@@ -82,7 +90,7 @@ static void receive(void *arg, struct udp_pcb *pcb, struct pbuf *p,
         }
     }
     if (!result) result=execute(command,index,(int32_t)get32(request+12));
-    uint8_t response[168]={0};
+    uint8_t response[192]={0};
     memcpy(response,"ABR1",4); put32(response+4,sequence);
     response[8]=command; response[9]=index; response[10]=result;
     if (index<MOTOR_COUNT) {
@@ -93,7 +101,7 @@ static void receive(void *arg, struct udp_pcb *pcb, struct pbuf *p,
         put16(response+16,s->statusword); put16(response+18,s->emcy_code);
         put32(response+20,(uint32_t)s->target_velocity);
         put32(response+24,(uint32_t)s->actual_velocity); put32(response+28,s->sdo_abort);
-        if (command==8 || command==9) {
+        if (command==8 || command==9 || command==12) {
             put32(response+56,(uint32_t)s->drive_target_velocity);
             put32(response+60,(uint32_t)s->demand_velocity);
             put16(response+64,s->drive_controlword);
@@ -115,7 +123,7 @@ static void receive(void *arg, struct udp_pcb *pcb, struct pbuf *p,
             put32(response+120,s->controlword_ms);
             put32(response+124,s->drive_target_ms);
         }
-        if (command==9) {
+        if (command==9 || command==12) {
             put16(response+128,s->hall_pattern);
             put16(response+130,s->pdo_ready);
             put32(response+132,s->hall_ms);
@@ -137,13 +145,29 @@ static void receive(void *arg, struct udp_pcb *pcb, struct pbuf *p,
     response[55]=(uint8_t)((board_identity.initialized ? 1U : 0U) |
                           (board_identity.stable ? 2U : 0U));
     put32(response+112,Motor_TimeMs());
-    if (command>=1 && command<=7 && result!=1 && result!=2 && result!=3 && result!=7 && result!=8) {
+    if (command==12) {
+        response[168]=(uint8_t)lift_status.state;
+        response[169]=(uint8_t)lift_status.reason;
+        for (uint32_t j=0; j<LIMIT_SENSOR_COUNT; j++) {
+            response[170]|=(uint8_t)(limit_sensors[j].raw_high << j);
+            response[171]|=(uint8_t)(limit_sensors[j].active << j);
+            response[172]|=(uint8_t)(limit_sensors[j].valid << j);
+        }
+        response[173]=LIFT_MOTOR_INDEX;
+        response[174]=1; /* lift protocol revision */
+        put32(response+176,lift_status.started_ms);
+        put32(response+180,lift_status.elapsed_ms);
+        put32(response+184,(uint32_t)lift_status.speed);
+        put32(response+188,APP_LIFT_MOVE_TIMEOUT_MS);
+    }
+    if (((command>=1 && command<=7) || command==10 || command==11) &&
+        result!=1 && result!=2 && result!=3 && result!=7 && result!=8) {
         /* Cache accepted and state/range-rejected requests. Duplicates never
          * repeat actions or renew the lease. A retry needs a fresh sequence. */
         owner_ms=now; last_sequence=sequence; have_sequence=1;
         memcpy(last_request,request,16); memcpy(last_reply,response,56);
     }
-    reply(addr,port,response,command==9 ? 168 : command==8 ? 128 : 56);
+    reply(addr,port,response,command==12 ? 192 : command==9 ? 168 : command==8 ? 128 : 56);
 }
 
 err_t ControlUdp_Init(void)

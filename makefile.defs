@@ -1,5 +1,10 @@
 # Fallback for the existing generated Debug makefiles until CubeIDE refreshes
 # source discovery. After regeneration motor.c is already in C_SRCS/objects.list.
+ifeq ($(filter ../Core/Src/lift_motion.c,$(C_SRCS)),)
+USER_OBJS += ./Core/Src/lift_motion.o
+-include ./Core/Src/lift_motion.d
+endif
+
 ifeq ($(filter ../Core/Src/motor.c,$(C_SRCS)),)
 USER_OBJS += ./Core/Src/motor.o
 endif
@@ -27,4 +32,10 @@ endif
 
 ifeq ($(filter ../Core/Src/app_scheduler.c,$(C_SRCS)),)
 USER_OBJS += ./Core/Src/app_scheduler.o
+endif
+
+# CubeIDE discovers the new source after refresh; do not edit generated makefiles.
+ifeq ($(filter ../Core/Src/limit_sensor.c,$(C_SRCS)),)
+USER_OBJS += ./Core/Src/limit_sensor.o
+-include ./Core/Src/limit_sensor.d
 endif

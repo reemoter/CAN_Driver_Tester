@@ -4,12 +4,18 @@
 #include "app_time.c"
 #include "app_scheduler.c"
 
-struct netif gnetif;
-static uint32_t motor_calls, phy_calls;
-void Motor_Process(void) { motor_calls++; }
-void ethernet_link_check_state(struct netif *netif)
+static uint32_t motor_calls, phy_calls, sensor_calls, sensor_inits, lift_calls;
+void Lift_Init(void) { }
+void Lift_Process(void) { assert(sensor_calls > lift_calls); lift_calls++; }
+void LimitSensor_Init(void) { sensor_inits++; }
+void LimitSensor_Process(void) { sensor_calls++; }
+void Motor_Process(void) {
+    assert(sensor_calls > motor_calls); /* sensors execute before motor */
+    assert(lift_calls > motor_calls);
+    motor_calls++;
+}
+void EthernetPhy_Process(void)
 {
-    assert(netif == &gnetif);
     assert(motor_calls > 0); /* motor work is ordered before PHY maintenance */
     phy_calls++;
 }
@@ -29,6 +35,7 @@ int main(void)
     assert(!motor_calls && !phy_calls);
     run_ticks(1000);
     assert(AppTime_NowMs() == 1000 && motor_calls == 1000);
+    assert(sensor_inits == 1 && sensor_calls == 1000);
     assert(phy_calls == 1000 / APP_ETH_LINK_CHECK_MS);
     assert(app_task_diagnostics[APP_TASK_MOTOR].missed == 0);
     assert(app_task_diagnostics[APP_TASK_ETH_LINK].period_ms == APP_ETH_LINK_CHECK_MS);

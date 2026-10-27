@@ -72,6 +72,8 @@ Ethernet HAL 호출, 버스 지연 등의 영향을 받는다. 각 주기는 관
   이는 애플리케이션 주기 작업을 예약하는 시계가 아니다.
 - CubeMX lwip.c의 기존 100ms PHY 스케줄은 USER CODE의 `#if 0`로 비활성화하여
   코드 재생성 후에도 이중 호출되지 않도록 한다. PHY 호출은 공통 스케줄러만 담당한다.
+  스케줄러는 별도 파일의 `EthernetPhy_Process()`를 직접 호출한다.
+  자동 생성되는 `ethernet_link_check_state()`가 비어 있어도 정상 동작한다.
 - 보드 ID는 `board_identity.h`의 `BOARD_CONFIG_ID`로 지정한다(기본 2, IP .24).
   스위치 GPIO 판독과 부팅 안정화 대기는 제거했다.
 - PC 도구는 별도 프로세스라 OS monotonic 시계를 사용한다. PC의 약 100ms 조회·

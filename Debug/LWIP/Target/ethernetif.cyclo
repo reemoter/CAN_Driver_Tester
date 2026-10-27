@@ -6,6 +6,6 @@
 ../LWIP/Target/ethernetif.c:402:6:pbuf_free_custom	2
 ../LWIP/Target/ethernetif.c:424:7:sys_now	1
 ../LWIP/Target/ethernetif.c:439:6:ethernet_link_check_state	1
-../LWIP/Target/ethernetif.c:445:6:HAL_ETH_RxAllocateCallback	2
-../LWIP/Target/ethernetif.c:467:6:HAL_ETH_RxLinkCallback	3
-../LWIP/Target/ethernetif.c:504:6:HAL_ETH_TxFreeCallback	1
+../LWIP/Target/ethernetif.c:444:6:HAL_ETH_RxAllocateCallback	2
+../LWIP/Target/ethernetif.c:466:6:HAL_ETH_RxLinkCallback	3
+../LWIP/Target/ethernetif.c:503:6:HAL_ETH_TxFreeCallback	1

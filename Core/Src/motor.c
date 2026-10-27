@@ -554,6 +554,21 @@ uint8_t Motor_SetVelocity(uint32_t i, int32_t velocity)
     return 1;
 }
 
+uint8_t Motor_ZeroTarget(uint32_t i)
+{
+    if (i >= MOTOR_COUNT || motor_status[i].state != MOTOR_ENABLED ||
+        nodes[i].stop_requested) return 0;
+    profile_reset(&nodes[i].profile, 0);
+    motor_status[i].target_velocity = 0;
+    motor_status[i].requested_velocity = 0;
+    motor_status[i].reversal_pending = 0;
+    nodes[i].reversal_zero_seen = 0;
+    nodes[i].last_direction = 0;
+    nodes[i].command_ms = AppTime_NowMs();
+    cancel_cycle(); /* invalidate queued target before any following SYNC */
+    return 1;
+}
+
 uint8_t Motor_QuickStop(uint32_t i)
 {
     if (i >= MOTOR_COUNT || motor_status[i].state == MOTOR_ERROR ||

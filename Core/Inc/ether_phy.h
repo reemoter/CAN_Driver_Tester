@@ -10,5 +10,7 @@ typedef struct {
     uint32_t scan_hal_status, mii_address_register, last_poll_ms;
 } EthernetDiagnostics;
 extern volatile EthernetDiagnostics ethernet_diagnostics;
+/* Scheduler entry point; independent of regenerated BSP link-check body. */
+void EthernetPhy_Process(void);
 void EthernetPhy_Check(struct netif *netif, ETH_HandleTypeDef *eth);
 #endif

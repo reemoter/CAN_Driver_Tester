@@ -438,8 +438,7 @@ u32_t sys_now(void)
   */
 void ethernet_link_check_state(struct netif *netif)
 {
-  /* Custom PHY glue: retain this call after CubeMX regeneration. */
-  EthernetPhy_Check(netif, &heth);
+
 }
 
 void HAL_ETH_RxAllocateCallback(uint8_t **buff)

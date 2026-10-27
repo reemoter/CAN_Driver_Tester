@@ -50,27 +50,10 @@ void MX_GPIO_Init(void)
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
-  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(OUTPUT_ABS_CLOCK_GPIO_Port, OUTPUT_ABS_CLOCK_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOD, OUTPUT_PWR_EPOS4_Pin|OUTPUT_PWR_LED_Pin|OUTPUT_LED0_Pin|OUTPUT_LED1_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin : OUTPUT_ABS_CLOCK_Pin */
-  GPIO_InitStruct.Pin = OUTPUT_ABS_CLOCK_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  HAL_GPIO_Init(OUTPUT_ABS_CLOCK_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : INPUT_ABS_DATA_Pin */
-  GPIO_InitStruct.Pin = INPUT_ABS_DATA_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(INPUT_ABS_DATA_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : OUTPUT_PWR_EPOS4_Pin OUTPUT_PWR_LED_Pin OUTPUT_LED0_Pin OUTPUT_LED1_Pin */
   GPIO_InitStruct.Pin = OUTPUT_PWR_EPOS4_Pin|OUTPUT_PWR_LED_Pin|OUTPUT_LED0_Pin|OUTPUT_LED1_Pin;
@@ -87,10 +70,10 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Alternate = GPIO_AF0_MCO;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : INPUT_DEVICE0_Pin INPUT_DEVICE1_Pin */
-  GPIO_InitStruct.Pin = INPUT_DEVICE0_Pin|INPUT_DEVICE1_Pin;
+  /*Configure GPIO pins : INPUT_S2_Pin INPUT_S1_Pin */
+  GPIO_InitStruct.Pin = INPUT_S2_Pin|INPUT_S1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
 }

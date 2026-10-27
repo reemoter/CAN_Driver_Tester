@@ -37,7 +37,8 @@ Core/Src/control_udp.o: ../Core/Src/control_udp.c \
  ../Middlewares/Third_Party/LwIP/system/arch/cc.h \
  ../Middlewares/Third_Party/LwIP/system/arch/cpu.h ../Core/Inc/motor.h \
  ../Core/Inc/main.h ../Core/Inc/app_timing.h ../Core/Inc/app_time.h \
- ../Core/Inc/board_identity.h \
+ ../Core/Inc/board_identity.h ../Core/Inc/lift_motion.h \
+ ../Core/Inc/limit_sensor.h \
  ../Middlewares/Third_Party/LwIP/src/include/lwip/udp.h \
  ../Middlewares/Third_Party/LwIP/src/include/lwip/pbuf.h \
  ../Middlewares/Third_Party/LwIP/src/include/lwip/netif.h \
@@ -101,6 +102,8 @@ Core/Src/control_udp.o: ../Core/Src/control_udp.c \
 ../Core/Inc/app_timing.h:
 ../Core/Inc/app_time.h:
 ../Core/Inc/board_identity.h:
+../Core/Inc/lift_motion.h:
+../Core/Inc/limit_sensor.h:
 ../Middlewares/Third_Party/LwIP/src/include/lwip/udp.h:
 ../Middlewares/Third_Party/LwIP/src/include/lwip/pbuf.h:
 ../Middlewares/Third_Party/LwIP/src/include/lwip/netif.h:

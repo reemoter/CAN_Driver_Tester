@@ -6,6 +6,15 @@ static uint32_t scan_address = 1U;
 static uint8_t found;
 static uint8_t mdio_initialized;
 
+/* CubeMX owns these instances; this application file owns PHY maintenance. */
+extern struct netif gnetif;
+extern ETH_HandleTypeDef heth;
+
+void EthernetPhy_Process(void)
+{
+    EthernetPhy_Check(&gnetif, &heth);
+}
+
 static uint8_t read_phy(ETH_HandleTypeDef *eth, uint32_t reg, uint32_t *value)
 {
     if (HAL_ETH_ReadPHYRegister(eth, ethernet_diagnostics.phy_address, reg, value)==HAL_OK) return 1;

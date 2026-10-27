@@ -87,6 +87,16 @@ static void ack(uint32_t i, uint8_t code)
 int main(void)
 {
     MotorProfile p = {0};
+    reset_test(); arm(0);
+    profile_goal(&nodes[0].profile, 150, clock_ms);
+    cycle_wait = 1; cycle_mailbox = CAN_TX_MAILBOX0;
+    assert(Motor_ZeroTarget(0));
+    assert(abort_count == 1 && !cycle_wait && !nodes[0].profile.duration);
+    assert(motor_status[0].state == MOTOR_ENABLED && !nodes[0].stop_requested);
+    process_pdo_cycle(clock_ms);
+    assert(le32(sent[sent_count-1].data) == 0 && sent[sent_count-1].data[4] == 15);
+    motor_status[0].state = MOTOR_ERROR;
+    assert(!Motor_ZeroTarget(0));
     profile_goal(&p,150,100);
     uint32_t duration = p.duration;
     assert(duration >= 937 && duration <= 938);

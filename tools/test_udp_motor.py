@@ -15,6 +15,20 @@ def response(sequence=1, command=0, index=0):
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_lift_status_extension(self):
+        frame = bytearray(response(1, 12)) + bytearray(136)
+        struct.pack_into('<8BIIiI', frame, 168, 1, 0, 3, 1, 3, 0, 1, 0,
+                         1000, 500, -150, 10000)
+        parsed = protocol.decode(bytes(frame), 1, 12, 0)
+        self.assertEqual(parsed['lift_state'], 1)
+        self.assertEqual(parsed['sensor_active'], 1)
+        self.assertEqual(parsed['sensor_valid'], 3)
+        self.assertEqual(parsed['lift_speed'], -150)
+        self.assertEqual(parsed['lift_timeout'], 10000)
+        self.assertIn('hall', parsed)
+        self.assertEqual(protocol.RESULTS[9], 'SENSOR_NOT_READY')
+        self.assertEqual(protocol.RESULTS[10], 'BOTH_LIMITS_ACTIVE')
+
     def test_direction_selection_and_signed_limits(self):
         for direction, sign in [('Forward (+)', 1), ('Reverse (-)', -1)]:
             self.assertEqual(protocol.direction_velocity('250', direction), sign * 250)
